@@ -1,124 +1,80 @@
 /**
- * CHASE LINE AI runner and hunter. Difficulty scales reaction and risk.
+ * CHASE LINE v2 AI. Both roles read the same interaction zones the player does,
+ * so the AI vaults, climbs, ducks and jumps with the same canned moves.
  */
 (function (root) {
   const Phys = () => root.ChasePhysics;
 
-  function gapAhead(world, c, look) {
-    const plats = Phys().platforms(world);
-    const feet = c.y + c.h;
-    const cx = c.x + c.w;
-    let current = null;
-    for (const p of plats) {
-      if (cx >= p.x - 4 && cx <= p.x + p.w + 8 && Math.abs(feet - p.y) < 24) current = p;
-    }
-    if (!current) return { gap: 0, next: null, current: null, toEdge: 99 };
-    const toEdge = current.x + current.w - cx;
-    let next = null;
-    for (const p of plats) {
-      if (p.x >= current.x + current.w - 2 && p.x < current.x + current.w + look + 80) {
-        if (!next || p.x < next.x) next = p;
-      }
-    }
-    const gap = next ? next.x - (current.x + current.w) : 40;
-    return { gap, next, current, toEdge };
+  function brain(c) {
+    c._ai = c._ai || { key: '', thr: 0, miss: false, rnd: 1 };
+    return c._ai;
+  }
+  function rand(c) {
+    // deterministic per character so sims are repeatable
+    const b = brain(c);
+    b.rnd = (b.rnd * 16807) % 2147483647;
+    return b.rnd / 2147483647;
   }
 
-  function obstacleAhead(world, c) {
-    const look = c.x + c.w + 50 + c.vx * 0.1;
-    for (const o of (world.track.obstacles || [])) {
-      if (o.x > c.x && o.x < look) return o;
+  function movement(world, c, diff, input) {
+    const P = Phys();
+    const b = brain(c);
+    const z = P.zoneAhead(world, c, 220);
+    if (z) {
+      const key = z.kind + ':' + Math.round((z.s ? z.s.x : z.edge) || 0);
+      if (b.key !== key) {
+        b.key = key;
+        const r = rand(c);
+        if (diff === 'perfect') b.thr = z.kind === 'gap' ? 14 : z.kind === 'climb' ? 40 : 26;
+        else if (diff === 'hard') b.thr = z.kind === 'gap' ? 10 + r * 30 : 24 + r * 20;
+        else if (diff === 'easy') b.thr = z.kind === 'gap' ? 25 + r * 80 : 18 + r * 40;
+        else b.thr = z.kind === 'gap' ? 14 + r * 55 : 20 + r * 30;
+        b.miss = diff === 'easy' ? r > 0.88 : diff === 'normal' ? r > 0.95 : false;
+        if (z.kind === 'gap') b.miss = false; // nobody runs off a roof on purpose
+      }
+      if (!b.miss && c.onGround) {
+        if (z.kind === 'duck' && z.dist <= Math.min(60, b.thr + 20)) input.slide = true;
+        else if ((z.kind === 'vault' || z.kind === 'kong') && z.active && z.dist <= b.thr + 10) { input.jump = true; input.vault = true; input.kong = true; }
+        else if (z.kind === 'climb' && z.active && z.dist <= b.thr + 10) input.jump = true;
+        else if (z.kind === 'wallrun' && z.active && P.hasSkill(c.loadout, 'wallrun') && c.role === 'runner' && z.dist <= 40) { input.jump = true; input.wallrun = true; }
+        else if (z.kind === 'gap' && z.active && z.dist <= b.thr) { input.jump = true; input.precision = true; }
+      }
     }
-    for (const pipe of (world.track.pipes || [])) {
-      if (pipe.x > c.x && pipe.x < look && c.y + 10 < pipe.y + pipe.h) return { pipe: true, x: pipe.x, y: pipe.y, w: pipe.w, h: 40 };
+    // roll big drops
+    if (!c.onGround && c.vy > 200 && (c.y + c.h) - c.airPeak > 50) {
+      if (diff !== 'easy' || rand(c) > 0.3) input.roll = true;
     }
-    for (const g of world.gates) {
-      if (g.open < 0.7 && g.x > c.x && g.x < look) return { gate: true, x: g.x, y: g.y, w: g.w, h: g.h };
-    }
-    return null;
+    return input;
   }
 
   function thinkRunner(world, diff) {
-    const c = world.runner;
-    const input = {};
-    const d = gapAhead(world, c, 360);
-    const delay = diff === 'easy' ? 0.12 : diff === 'hard' ? 0.02 : 0.06;
-    c._ai = c._ai || { t: 0 };
-    c._ai.t += Phys().DT;
-
-    const o = obstacleAhead(world, c);
-    const nearEdge = d.toEdge < 90;
-    if (o && o.gate && o.x - (c.x + c.w) < 70 && !nearEdge) input.slide = true;
-    if (o && o.pipe && o.x - (c.x + c.w) < 70 && !nearEdge) input.slide = true;
-    if (o && !o.gate && !o.pipe && o.x - (c.x + c.w) < 56) {
-      if (o.w >= 72) input.kong = true;
-      input.jump = true;
-      input.vault = true;
-    }
-
-    // jump before a gap
-    if (d.current && d.gap > 28) {
-      const need = Math.max(0.13, 0.09 + d.gap / 2000);
-      const tTo = d.toEdge / Math.max(80, c.vx);
-      if (tTo < need + delay && tTo > 0 && (c.onGround || c.coyote > 0 || c.state === 'roll')) {
-        if (d.next && (d.next.tags || []).indexOf('precision') >= 0) input.precision = true;
-        input.jump = true;
-      }
-    }
-    if (Phys().hasSkill(c.loadout, 'wallrun')) {
-      for (const w of (world.track.walls || [])) {
-        const dx = w.x - (c.x + c.w);
-        if (dx < 70 && dx > -20 && (w.tags || []).indexOf('wallrun') >= 0 && c.y + c.h > w.y && c.y < w.y + w.h + 40) {
-          input.jump = true; input.wallrun = true;
-        }
-      }
-    }
-    // roll on hard landing
-    if (!c.onGround && c.vy > 700) input.roll = true;
-
-    // risky vs safe: if we have precision, try to stay high by jumping to precision ledges
-    return input;
+    return movement(world, world.runner, diff || 'normal', {});
   }
 
   function thinkHunter(world, diff) {
+    const P = Phys();
     const h = world.hunter, r = world.runner;
-    const input = {};
-    const d = gapAhead(world, h, 360);
-    const lead = r.x - h.x;
-
-    if (d.current && d.gap > 36) {
-      const tTo = d.toEdge / Math.max(80, h.vx);
-      const need = 0.1 + d.gap / 2200;
-      if (tTo < need && tTo > 0) input.jump = true;
+    h.aiDiff = diff;
+    const input = movement(world, h, diff === 'easy' ? 'normal' : 'hard', {});
+    const lead = (r.x + r.w / 2) - (h.x + h.w / 2);
+    const dy = (r.y + r.h) - (h.y + h.h);
+    // sprint in bursts when the runner pulls away
+    const b = brain(h);
+    if (b.sprinting && (h.stamina < 0.06 || lead < 90)) b.sprinting = false;
+    if (!b.sprinting && lead > 250 && h.stamina > 0.45 && world.elapsed > 3) b.sprinting = true;
+    input.sprint = !!b.sprinting;
+    if (world.elapsed > 1.5 && lead > -10 && lead < 30 && Math.abs(dy) < 28) input.grab = true;
+    if (world.elapsed > 4 && P.hasSkill(h.loadout, 'dive') && lead > 44 && lead < 66 && Math.abs(dy) < 8 && h.onGround && r.onGround) {
+      if (diff !== 'easy' || rand(h) > 0.6) input.dive = true;
     }
-    const o = obstacleAhead(world, h);
-    if (o && (o.gate || o.pipe) && o.x - (h.x + h.w) < 70) input.slide = true;
-    if (o && !o.gate && !o.pipe && o.x - (h.x + h.w) < 56) { input.jump = true; input.vault = true; }
-    if (!h.onGround && h.vy > 700) input.roll = true;
-
-    // sprint if behind
-    if (world.elapsed > 4 && lead > 180) input.sprint = true;
-
-    const dist = Math.hypot((r.x - h.x), (r.y - h.y));
-    if (world.elapsed > 2.2 && dist < 42) input.grab = true;
-
-    if (world.elapsed > 5 && r.x > 900 && Phys().hasSkill(h.loadout, 'dive') && lead > 55 && lead < 100 && Math.abs(r.y - h.y) < 36) {
-      if (diff !== 'easy' || lead < 80) input.dive = true;
-    }
-
-    // traps
-    if (world.elapsed > 7 && r.x > 1600 && lead > 140 && lead < 560) {
-      if (Phys().hasSkill(h.loadout, 'gate') && world.cooldown.gate <= 0 && Math.random() < (diff === 'hard' ? 0.02 : 0.01)) {
-        input.trapGate = true;
-      }
-      if (Phys().hasSkill(h.loadout, 'collapse') && world.cooldown.collapse <= 0 && Math.random() < (diff === 'hard' ? 0.015 : 0.008)) {
-        input.trapCollapse = true;
-      }
+    if (world.elapsed > 7 && lead > 160 && lead < 560) {
+      if (P.hasSkill(h.loadout, 'gate') && world.cooldown.gate <= 0 && rand(h) < (diff === 'hard' ? 0.02 : 0.01)) input.trapGate = true;
+      if (P.hasSkill(h.loadout, 'collapse') && world.cooldown.collapse <= 0 && rand(h) < (diff === 'hard' ? 0.015 : 0.008)) input.trapCollapse = true;
     }
     return input;
   }
 
-  const api = { thinkRunner, thinkHunter, gapAhead };
+  const api = { thinkRunner, thinkHunter };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ChaseAI = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

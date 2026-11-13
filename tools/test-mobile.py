@@ -4,7 +4,7 @@ import json, sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-URL = "http://127.0.0.1:8767/"
+URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8768/"
 logs, errors, failed = [], [], 0
 
 def attach(page):
@@ -63,8 +63,8 @@ def main():
         check("track select", page.locator("#trackScreen").is_visible())
         txt = page.locator("#trackScreen").inner_text()
         check("rooftops tracks", "WATER TOWERS" in txt.upper() and "CRANE ROW" in txt.upper())
-        check("locked districts", "Night Market" in txt and "LOCKED" in txt)
-        check("monsoon playable", "Monsoon" in txt)
+        check("locked districts", "NIGHT MARKET" in txt.upper() and "LOCKED" in txt.upper())
+        check("monsoon playable", "MONSOON" in txt.upper())
 
         page.evaluate("() => window.__CHASELINE__.startTrack('water-towers', 'runner')")
         page.wait_for_timeout(200)
@@ -107,6 +107,29 @@ def main():
         page.evaluate("() => { window.__CHASELINE__.startTrack('crane-row', 'hunter'); window.__CHASELINE__.skipCountdown(); }")
         page.wait_for_timeout(250)
         check("hunter traps", page.locator("#traps").evaluate("el => el.classList.contains('is-on')"))
+
+        # v2: camera frames the LOCAL character in both roles
+        SX = """() => { const C = window.__CHASELINE__; const w = C.world(); const L = C.Game.youAre === 'runner' ? w.runner : w.hunter;
+                         const c = C.cam(); const sx = (L.x + L.w / 2 - c.x) * c.z + innerWidth / 2; const sy = (L.y + L.h / 2 - c.y) * c.z + innerHeight / 2;
+                         return [sx / innerWidth, sy / innerHeight, C.Game.youAre]; }"""
+        for role, track in (("runner", "water-towers"), ("hunter", "crane-row")):
+            page.evaluate(f"() => {{ const C = window.__CHASELINE__; C.startTrack('{track}', '{role}'); C.skipCountdown(); C.autopilot('normal'); }}")
+            worst = 0
+            for i in range(12):
+                page.wait_for_timeout(500)
+                fx, fy, who = page.evaluate(SX)
+                if not (0.12 < fx < 0.62 and 0.15 < fy < 0.88) or who != role: worst += 1
+            check(f"camera follows local {role} (6s sampled)", worst == 0)
+
+        # v2: the hunter AI catches a passive runner, with a takedown beat before results
+        page.evaluate("() => { const C = window.__CHASELINE__; C.startTrack('water-towers', 'runner'); C.skipCountdown(); C.autopilot(null); }")
+        caught = page.evaluate("""() => new Promise(r => { const C = window.__CHASELINE__; const t0 = performance.now();
+            const go = () => { const w = C.world(); if (w.result === 'catch') return r(true); if (performance.now() - t0 > 15000) return r(false); requestAnimationFrame(go); }; go(); })""")
+        check("hunter catches passive runner", caught)
+        page.wait_for_timeout(2500)
+        scr = page.evaluate("() => [window.__CHASELINE__.screen(), window.__CHASELINE__.world()._overT]")
+        print("  after catch", scr)
+        check("catch -> results", scr[0] == "result")
 
         # two-context PeerJS (best effort)
         try:

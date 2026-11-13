@@ -89,11 +89,11 @@
       plat(1860, 220, 860, 200),
       plat(2860, 340, 780, 160, ['safe']),
       plat(2920, 180, 90, 130, ['precision', 'risky']),
-      plat(3120, 170, 700, 200, ['risky']),
-      plat(3960, 250, 1100, 200, ['collapse', 'gate']),
+      plat(3120, 170, 480, 200, ['risky']),
+      plat(3800, 250, 1260, 200, ['collapse', 'gate']),
       plat(5200, 260, 800, 200),
       plat(6140, 200, 640, 200),
-      plat(6820, 80, 880, 22, ['wallrun-dest', 'risky']),
+      plat(6960, 80, 740, 22, ['wallrun-dest', 'risky']),
       plat(6900, 350, 700, 150, ['safe']),
       plat(7680, 230, 920, 200),
       plat(8720, 280, 600, 180),
@@ -114,7 +114,7 @@
         obst(2200, 220, 88, 42, 'ac', ['kong']),
         obst(4300, 250, 56, 34, 'vent', ['vault']),
         obst(5400, 260, 90, 44, 'ac', ['kong']),
-        obst(8000, 230, 52, 30, 'vent', ['vault']),
+        obst(8360, 230, 52, 30, 'vent', ['vault']),
       ],
       pipes: [{ x: 8000, y: 175, w: 260, h: 16 }], // slide under on the 7680/8720 corridor
       gateSlots: [{ x: 4500, y: 250, w: 24, h: 130 }, { x: 7900, y: 230, w: 24, h: 120 }],
@@ -159,7 +159,7 @@
       sky: 'dawn',
       wet: false,
       platforms,
-      walls: [wall(5088, 70, 22, 90, 'L', ['wallrun'])],
+      walls: [wall(5560, 70, 22, 70, 'L', ['wallrun'])],
       obstacles: [
         obst(1100, 240, 50, 30, 'vent', ['vault']),
         obst(2500, 170, 84, 40, 'ac', ['kong']),
@@ -192,7 +192,7 @@
       plat(6260, 200, 700, 200, ['slip']),
       plat(7120, 310, 640, 160, ['safe', 'slip']),
       plat(7200, 140, 70, 120, ['precision', 'risky', 'slip']),
-      plat(7380, 160, 820, 200, ['risky', 'slip']),
+      plat(7380, 175, 820, 200, ['risky', 'slip']),
       plat(8360, 230, 1400, 200, ['slip']),
     ];
     return {
@@ -204,7 +204,7 @@
       sky: 'monsoon',
       wet: true,
       platforms,
-      walls: [wall(5260, 80, 22, 90, 'L', ['wallrun'])],
+      walls: [wall(5860, 90, 22, 70, 'L', ['wallrun'])],
       obstacles: [
         obst(1400, 270, 52, 30, 'vent', ['vault']),
         obst(2300, 230, 86, 40, 'ac', ['kong']),

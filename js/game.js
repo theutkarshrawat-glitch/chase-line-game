@@ -220,7 +220,12 @@
     const hunterLoad = (Game.youAre === 'hunter' ? you.loadoutChaser : opp.loadoutChaser).slice();
     // ensure movement basics
     ['jump', 'slide', 'roll', 'vault'].forEach((id) => { if (runnerLoad.indexOf(id) < 0 && (Game.youAre === 'runner' ? you.unlocks : opp.unlocks).indexOf(id) >= 0) runnerLoad.push(id); });
-    Game.world = Phys.createWorld(track, { runnerLoadout: runnerLoad, hunterLoadout: hunterLoad });
+    Game.world = Phys.createWorld(track, { runnerLoadout: runnerLoad, hunterLoadout: hunterLoad, diff: Game.diff });
+    if (Game.mode === 'solo' || Game.mode === 'pass') {
+      if (Game.youAre === 'runner') Game.world.hunter.aiDiff = Game.diff; else Game.world.runner.aiDiff = Game.diff;
+    }
+    Render.resize($('app').clientWidth, $('app').clientHeight);
+    Render.resetCam(Game.world, Game.youAre);
     Game.acc = 0;
     Game.remoteInput = {};
     Game.guestShadow = null;
@@ -330,6 +335,12 @@
     if (!Game.world) return;
     const local = Game.youAre === 'runner' ? Game.world.runner : Game.world.hunter;
     const remote = Game.youAre === 'runner' ? Game.world.hunter : Game.world.runner;
+    if (Game.autopilot) {
+      const ap = Game.youAre === 'runner' ? AI.thinkRunner(Game.world, Game.autopilot) : AI.thinkHunter(Game.world, Game.autopilot);
+      Object.assign(input, ap);
+      if (ap.trapGate) Phys.dropGate(Game.world);
+      if (ap.trapCollapse) Phys.dropCollapse(Game.world);
+    }
     Phys.applyInput(local, input);
     if (Game.mode === 'solo' || Game.mode === 'pass') {
       const aiIn = Game.youAre === 'runner' ? AI.thinkHunter(Game.world, Game.diff) : AI.thinkRunner(Game.world, Game.diff);
@@ -368,21 +379,30 @@
       if (!Game._titleWorld) {
         const t = Tracks.get('water-towers');
         Game._titleWorld = Phys.createWorld(t, {});
-        Game._titleWorld.runner.x = 400;
-        Game._titleWorld.hunter.x = 280;
+        const r = Game._titleWorld.runner;
+        r.x = 1062; r.vx = 0; r.state = 'run'; r.onGround = true;
+        Game._titleT = 0;
       }
-      Game._titleWorld.runner.phase += dt * 8;
-      Game._titleWorld.hunter.phase += dt * 7.4;
-      Game._titleWorld.t = 60;
+      Game._titleT += dt;
+      const tw = Game._titleWorld;
+      // the runner waits on the parapet; wind works the jacket
+      tw.runner.vx = 0;
+      tw.runner.dist += dt * 0.0001;
+      tw.runner.stateT += dt;
+      for (let i = 0; i < 2; i++) { tw.runner.vx = -70 - 40 * Math.sin(Game._titleT * 2.3); Phys.stepCloth && Phys.stepCloth(tw.runner, dt / 2); }
+      tw.runner.vx = 0;
+      tw.t = 60;
       Render.resize($('app').clientWidth, $('app').clientHeight);
-      Render.camX = 120; Render.camY = 0;
-      Render.draw(Game._titleWorld);
+      Render.titleCam(tw, Game._titleT);
+      Render.draw(tw, { title: true });
     }
     if (Game.screen !== 'play' && Game.screen !== 'cd' && Game.screen !== 'result') return;
     if (!Game.world) return;
     Render.resize($('app').clientWidth, $('app').clientHeight);
 
-    if (Game.screen === 'play' && !Game.world.over) {
+    if (Game.frozen) {
+      Game.acc = 0;
+    } else if (Game.screen === 'play' && (!Game.world.over || (Game.world._overT || 0) < (Game.world.result === 'catch' ? 1.2 : 0.5))) {
       Game.acc += dt;
       const step = Phys.DT;
       while (Game.acc >= step) {
@@ -407,7 +427,8 @@
         Game.acc -= step;
       }
       sfxFromEvents(Game.world);
-      if (Game.world.over) endRound();
+      // let the takedown / escape beat play out before the results card
+      if (Game.world.over && (Game.world._overT || 0) >= (Game.world.result === 'catch' ? 1.2 : 0.5)) endRound();
     } else if (Game.screen === 'result' || (Game.world && Game.world.over)) {
       Game.acc += dt;
       while (Game.acc >= Phys.DT) {
@@ -416,11 +437,16 @@
       }
     }
 
-    Render.follow(Game.world, dt);
+    Render.follow(Game.world, dt, Game.youAre);
+    // footsteps from the local run cycle (two per cycle)
+    const me = Game.youAre === 'runner' ? Game.world.runner : Game.world.hunter;
+    const stepIdx = Math.floor((me.phase || 0) / Math.PI);
+    if (Game.screen === 'play' && me.onGround && (me.state === 'run' || me.state === 'land') && stepIdx !== Game._stepIdx && me.vx > 80) Audio.step(me.vx * 1.7);
+    Game._stepIdx = stepIdx;
     Render.draw(Game.world);
     updateHud();
     const spd = Game.world ? Math.max(Game.world.runner.vx, Game.world.hunter.vx) : 0;
-    Audio.setWind(Math.min(1, spd / 580));
+    Audio.setWind(Math.min(1, spd / 300));
   }
 
   function sfxFromEvents(world) {
@@ -437,6 +463,8 @@
       if (e.type === 'escape') Audio.escape();
       if (e.type === 'near-miss') Audio.nearMiss();
       if (e.type === 'style') popStyle(e.kind, e.pts);
+      if ((e.type === 'climb' || e.type === 'wallrun') && e.role === Game.youAre) Audio.vault();
+      if (e.type === 'bump' && e.role === Game.youAre) { Audio.land(true); Audio.haptic(30); }
     }
     world.events.length = 0;
   }
@@ -617,7 +645,9 @@
           c.y += (n.y - c.y) * 0.45;
           c.vx = n.vx; c.vy = n.vy; c.state = n.state; c.stateT = n.stateT;
           c.onGround = n.onGround; c.phase = n.phase; c.caught = n.caught; c.downed = n.downed;
-          c.ragdoll = n.ragdoll; c.scarf = n.scarf || c.scarf; c.h = n.h; c.sprinting = n.sprinting;
+          c.h = n.h; c.sprinting = n.sprinting; c.land = n.land || 0; c.trick = n.trick;
+          if (n.dist != null) c.dist = n.dist;
+          c.move = n.move ? Object.assign({}, n.move) : null;
         }
         lerp(Game.world.runner, s.runner);
         lerp(Game.world.hunter, s.hunter);
@@ -683,13 +713,16 @@
   window.ChaseGame = Game;
   window.__CHASELINE__ = {
     ready: true,
-    Game, Prof, Skills, Tracks, Phys,
+    Game, Prof, Skills, Tracks, Phys, Render,
     show, startRound, startTrack(id, role) { Game.trackId = id; Game.mode = 'solo'; Game.youAre = role || 'runner'; Game.opp = { name: 'AI', rank: 'Bronze', unlocks: Prof.START_UNLOCKS, loadoutRunner: ['jump','slide','roll','vault'], loadoutChaser: ['sprint','grab','collapse'] }; Game.series = { you: 0, them: 0, round: 0, firstRole: Game.youAre }; if (!Prof.current()) Prof.create('TEST'); startRound(); },
     input(inp) { Object.assign(pending, inp || {}); },
     trap(name) { pendingTraps[name] = true; },
     world() { return Game.world; },
     screen() { return Game.screen; },
     skipCountdown() { show('play'); Game.last = performance.now(); },
+    autopilot(d) { Game.autopilot = d || null; },
+    freeze(on) { Game.frozen = !!on; },
+    cam() { const c = Render.cam; return { x: c.x, y: c.y, z: c.z, role: Render.localRole, debug: Render.debug }; },
     grantXp(n) { if (!Prof.current()) Prof.create('TEST'); Prof.award('runner', n); },
     forceNearMiss() {
       if (!Game.world) return;

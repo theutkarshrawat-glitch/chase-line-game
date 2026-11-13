@@ -22,14 +22,26 @@ A rooftop parkour chase. You run, or you hunt. Best of three, roles swap, and ev
 ## Run locally
 
 ```bash
-python3 -m http.server 8767
+python3 -m http.server 8768
 ```
 
-Open http://127.0.0.1:8767/
+Open http://127.0.0.1:8768/
 
 ```bash
+node tools/matchups.js      # physics/AI: zero penetration, no stuck >2s, catch/escape matchups
+node tools/sim.js
 python3 tools/test-mobile.py
 python3 tools/shots.py
 ```
 
 Barlow Condensed is included under the SIL Open Font License (`fonts/OFL.txt`). PeerJS is vendored.
+
+## v2 movement model
+
+- Real scale: 29 px = 1 m (runner 1.8 m), top run speed 9 m/s, heavy gravity.
+- Kinematic swept-AABB collision (X then Y), so nobody tunnels through buildings.
+- Interaction zones (gap, vault, kong, climb, duck, wall-run) trigger canned, collision-checked
+  moves with IK hand/foot plants. Missing a swipe means a bump, a stumble and lost speed.
+- Articulated silhouette rig (`js/rig.js`) with a distance-driven run cycle and cloth on the jacket and tie.
+- The camera follows whoever you play, sits on the left third, and zooms with the obstacle ahead
+  and with the distance to the rival. When the rival is off screen, an arrow shows where.

@@ -1,4 +1,4 @@
-const CACHE = 'chaseline-v1';
+const CACHE = 'chaseline-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   './js/skills.js',
   './js/tracks.js',
   './js/physics.js',
+  './js/rig.js',
   './js/audio.js',
   './js/render.js',
   './js/ai.js',

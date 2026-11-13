@@ -1,68 +1,82 @@
 #!/usr/bin/env python3
+"""v2 screenshot + gameplay video capture. Serve the repo on :8768 first
+(python3 -m http.server 8768). Writes shots/v2-*.png and shots/v2-gameplay.webm."""
+import shutil, sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-OUT = Path("/workspace/game/chaseline/shots")
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "shots"
 OUT.mkdir(parents=True, exist_ok=True)
-URL = "http://127.0.0.1:8767/"
+URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8768/"
+VIEW = {"width": 844, "height": 390}
 
-def ready(page):
+WAIT = """(cond) => new Promise(r => {
+  const C = window.__CHASELINE__;
+  const f = new Function('L','w','R','H','z', 'return (' + cond + ')');
+  const t0 = performance.now();
+  const go = () => {
+    const w = C.world(); const L = C.Game.youAre === 'runner' ? w.runner : w.hunter;
+    if (f(L, w, w.runner, w.hunter, C.cam().z)) { C.freeze(true); return setTimeout(() => r(true), 150); }
+    if (performance.now() - t0 > 50000) return r(false);
+    requestAnimationFrame(go);
+  };
+  go();
+})"""
+
+def boot(page):
+    page.goto(URL, wait_until="networkidle")
     page.wait_for_function("() => window.__CHASELINE__ && window.__CHASELINE__.ready")
-    page.wait_for_timeout(400)
+    page.evaluate("() => { localStorage.clear(); window.__CHASELINE__.Prof.create('RAVI'); window.__CHASELINE__.grantXp(900); }")
+
+def start(page, track, role, ap):
+    page.evaluate(f"() => {{ const C = window.__CHASELINE__; C.freeze(false); C.startTrack('{track}', '{role}'); C.skipCountdown(); C.autopilot({ap!r}); }}".replace("None", "null"))
+
+def snap(page, name, cond):
+    ok = page.evaluate(WAIT, cond)
+    page.screenshot(path=str(OUT / f"v2-{name}.png"))
+    print(name, "ok" if ok else "TIMEOUT (captured anyway)")
+    page.evaluate("() => window.__CHASELINE__.freeze(false)")
+    return ok
 
 with sync_playwright() as p:
     browser = p.chromium.launch(channel="chrome", args=["--no-sandbox", "--disable-dev-shm-usage"], headless=True)
-    context = browser.new_context(viewport={"width": 844, "height": 390}, device_scale_factor=2, is_mobile=True, has_touch=True)
-    page = context.new_page()
-    page.goto(URL, wait_until="networkidle")
-    ready(page)
-    page.evaluate("""() => {
-      try { localStorage.clear(); } catch (e) {}
-    }""")
-    page.reload(wait_until="networkidle")
-    ready(page)
-    page.evaluate("() => window.__CHASELINE__.Prof.create('RAVI')")
+    ctx = browser.new_context(viewport=VIEW, device_scale_factor=2, is_mobile=True, has_touch=True)
+    page = ctx.new_page()
+    errs = []
+    page.on("pageerror", lambda e: errs.append(str(e)))
+    boot(page)
     page.evaluate("() => window.__CHASELINE__.show('title')")
-    page.wait_for_timeout(500)
-    page.screenshot(path=str(OUT / "01-title.png"))
-    print("01-title")
+    page.wait_for_timeout(1500)
+    page.screenshot(path=str(OUT / "v2-title.png")); print("title")
 
-    page.evaluate("() => window.__CHASELINE__.show('track')")
-    page.wait_for_timeout(400)
-    page.screenshot(path=str(OUT / "02-track-select.png"))
-    print("02-track-select")
+    start(page, "water-towers", "runner", "perfect")
+    snap(page, "run", "w.elapsed > 2.2 && L.onGround && L.state === 'run' && L.vx > 220 && Math.abs(Math.sin(L.phase)) > 0.9")
+    snap(page, "vault", "L.move && /vault|kong/.test(L.move.type) && L.move.u > 0.38 && L.move.u < 0.55")
+    start(page, "water-towers", "runner", "perfect")
+    snap(page, "climb", "L.move && /climb|mantle|ledge/.test(L.move.type) && L.move.u > 0.45 && L.move.u < 0.62")
+    start(page, "crane-row", "runner", "perfect")
+    snap(page, "zoom-gap", "w.elapsed > 3 && !L.onGround && L.state !== 'move' && z < " + "0.85 * (390 / 372)")
+    start(page, "crane-row", "hunter", "hard")
+    snap(page, "hunter-camera", "w.elapsed > 6.5 && L.onGround")
+    start(page, "water-towers", "runner", None)
+    snap(page, "takedown", "H.state === 'takedown' && H.stateT > 0.35")
+    ctx.close()
 
-    page.evaluate("() => window.__CHASELINE__.grantXp(250)")
-    page.evaluate("() => window.__CHASELINE__.show('skills')")
-    page.wait_for_timeout(400)
-    page.screenshot(path=str(OUT / "03-skill-tree.png"))
-    print("03-skill-tree")
-
-    page.evaluate("() => { window.__CHASELINE__.startTrack('water-towers', 'runner'); window.__CHASELINE__.skipCountdown(); }")
-    page.wait_for_timeout(800)
-    page.screenshot(path=str(OUT / "04-gameplay-runner.png"))
-    print("04-gameplay-runner")
-
-    page.evaluate("""() => {
-      const P = window.__CHASELINE__.Prof;
-      P.unlock('gate'); P.unlock('dive');
-      P.update(p => { if (p.loadoutChaser.indexOf('gate')<0) p.loadoutChaser.push('gate'); });
-      window.__CHASELINE__.startTrack('crane-row', 'hunter');
-      window.__CHASELINE__.skipCountdown();
-    }""")
-    page.wait_for_timeout(700)
-    page.screenshot(path=str(OUT / "05-hunter-traps.png"))
-    print("05-hunter-traps")
-
-    page.evaluate("() => { window.__CHASELINE__.startTrack('water-towers', 'runner'); window.__CHASELINE__.skipCountdown(); window.__CHASELINE__.forceNearMiss(); }")
-    page.wait_for_timeout(250)
-    page.screenshot(path=str(OUT / "06-near-miss.png"))
-    print("06-near-miss")
-
-    page.evaluate("() => window.__CHASELINE__.finish('escape')")
-    page.wait_for_timeout(900)
-    page.screenshot(path=str(OUT / "07-results-xp.png"))
-    print("07-results-xp")
-
+    # gameplay video: runner with perfect autopilot, then a round as the hunter
+    vctx = browser.new_context(viewport=VIEW, device_scale_factor=1, is_mobile=True, has_touch=True,
+                               record_video_dir=str(OUT / "_vid"), record_video_size=VIEW)
+    vp = vctx.new_page()
+    vp.on("pageerror", lambda e: errs.append(str(e)))
+    boot(vp)
+    vp.evaluate("() => window.__CHASELINE__.show('title')"); vp.wait_for_timeout(2500)
+    start(vp, "water-towers", "runner", "perfect"); vp.wait_for_timeout(22000)
+    start(vp, "crane-row", "hunter", "hard"); vp.wait_for_timeout(14000)
+    video = vp.video
+    vctx.close()
+    dest = OUT / "v2-gameplay.webm"
+    shutil.move(video.path(), dest)
+    shutil.rmtree(OUT / "_vid", ignore_errors=True)
+    print("video", dest)
     browser.close()
-print("shots written", OUT)
+    print("page errors:", errs)
