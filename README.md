@@ -31,6 +31,7 @@ Open http://127.0.0.1:8768/
 node tools/matchups.js      # physics/AI: zero penetration, no stuck >2s, catch/escape matchups
 node tools/sim.js
 python3 tools/test-mobile.py
+python3 tools/test-multiplayer.py            # two browsers, real PeerJS + MQTT relay; see header for modes
 python3 tools/shots.py
 ```
 
@@ -45,3 +46,11 @@ Barlow Condensed is included under the SIL Open Font License (`fonts/OFL.txt`). 
 - Articulated silhouette rig (`js/rig.js`) with a distance-driven run cycle and cloth on the jacket and tie.
 - The camera follows whoever you play, sits on the left third, and zooms with the obstacle ahead
   and with the distance to the rival. When the rival is off screen, an arrow shows where.
+
+## Two-phone play (v3 networking)
+
+Host taps Create and keeps that screen open; guest taps Join and types the 4-character code (any case).
+Two transports run at once: DIRECT (PeerJS/WebRTC) and RELAY (MQTT over secure WebSocket via free
+public brokers: shiftr.io on 443, EMQX, HiveMQ). If the direct line doesn't open within ~7 s (typical on
+mobile data behind carrier NAT), the match runs over the relay. The HUD shows which one is in use.
+The host is authoritative; snapshots are ~16 Hz on the relay.

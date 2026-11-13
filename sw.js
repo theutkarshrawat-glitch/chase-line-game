@@ -1,4 +1,4 @@
-const CACHE = 'chaseline-v2';
+const CACHE = 'chaseline-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -15,6 +15,7 @@ const ASSETS = [
   './js/net.js',
   './js/game.js',
   './vendor/peerjs.min.js',
+  './vendor/mqtt.min.js',
   './fonts/BarlowCondensed-Regular.ttf',
   './fonts/BarlowCondensed-Medium.ttf',
   './fonts/BarlowCondensed-SemiBold.ttf',

@@ -157,3 +157,10 @@ button{font-family:inherit;cursor:pointer;border:0;letter-spacing:.14em;text-tra
 #cdScreen{background:transparent;}
 #cdBig{font-size:96px;font-weight:600;font-style:italic;letter-spacing:.1em;text-align:center;color:#fff;text-shadow:0 4px 30px rgba(0,0,0,.35);}
 #cdRoles{text-align:center !important;color:#fff !important;letter-spacing:.5em !important;}
+
+#netTag{position:absolute;right:calc(18px + var(--safe-r));top:calc(44px + var(--safe-t));font-size:10px;font-weight:500;letter-spacing:.24em;
+  color:var(--dim);padding:2px 8px;border-radius:999px;background:var(--glass);border:1px solid var(--line);}
+#netTag::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:1px;background:#888;}
+#netTag.direct::before{background:#5be37d;box-shadow:0 0 6px #5be37d;}
+#netTag.relay::before{background:var(--accent);box-shadow:0 0 6px var(--accent);}
+#netTag.off::before{background:var(--hunt);}

@@ -30,6 +30,7 @@
         <div id="timerPill">1:00</div>
         <div class="role hunter"><span id="hunterLabel">HUNTER: AI</span><span class="badge">◉</span></div>
       </div>
+      <div id="netTag" style="display:none"></div>
       <div id="styleBar"><div id="styleFill"></div></div>
       <div id="stylePop"></div>
       <button type="button" id="sprintBtn">SPRINT</button>
@@ -79,7 +80,7 @@
       <div id="roomCode">————</div>
       <p class="hint" id="roomHint">Share this code. The other phone joins, and both of you keep your own skills.</p>
       <form id="joinForm" style="display:none;">
-        <input id="joinInput" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+        <input id="joinInput" maxlength="8" inputmode="text" autocorrect="off" spellcheck="false" placeholder="CODE" autocomplete="off" autocapitalize="characters">
         <button class="btn" type="submit">Join</button>
       </form>
       <p class="hint" id="roomStatus"></p>
@@ -141,6 +142,7 @@
   </div>
 
   <script src="./vendor/peerjs.min.js"></script>
+  <script src="./vendor/mqtt.min.js"></script>
   <script src="./js/profile.js"></script>
   <script src="./js/skills.js"></script>
   <script src="./js/tracks.js"></script>

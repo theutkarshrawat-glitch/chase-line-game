@@ -131,42 +131,7 @@ def main():
         print("  after catch", scr)
         check("catch -> results", scr[0] == "result")
 
-        # two-context PeerJS (best effort)
-        try:
-            c2 = browser.new_context(viewport={"width": 844, "height": 390}, device_scale_factor=2, is_mobile=True, has_touch=True)
-            p2 = c2.new_page()
-            attach(p2)
-            p2.goto(URL, wait_until="networkidle")
-            ready(p2)
-            p2.evaluate("() => { if (!window.__CHASELINE__.Prof.current()) window.__CHASELINE__.Prof.create('KIRA'); }")
-            page.evaluate("() => { if (!window.__CHASELINE__.Prof.current()) window.__CHASELINE__.Prof.create('RAVI'); }")
-            # host
-            info = page.evaluate("""() => new Promise((resolve) => {
-              const N = window.ChaseNet;
-              const t = setTimeout(() => resolve({err:'host-timeout', code:null}), 8000);
-              N.create((err, code) => { clearTimeout(t); resolve({err: err && String(err.message || err), code}); });
-            })""")
-            print("  peer host", info)
-            if info and info.get("code"):
-                code = info["code"]
-                joined = p2.evaluate("""(code) => new Promise((resolve) => {
-                  const N = window.ChaseNet;
-                  const t = setTimeout(() => resolve({ok:false, err:'timeout'}), 7000);
-                  N.join(code, (err) => { clearTimeout(t); resolve({ok:!err, err: err && String(err.message||err)}); });
-                })""", code)
-                print("  peer join", joined)
-                linked = bool(joined and joined.get("ok"))
-                print("PEERJS", "linked" if linked else "host code issued, guest join not confirmed")
-                if not linked:
-                    print("  (WebRTC/PeerJS not fully verified in this environment; code path is implemented)")
-            else:
-                print("  peerjs host failed (reported honestly)")
-                print("PEERJS not confirmed")
-            c2.close()
-        except Exception as e:
-            print("  peerjs test error", e)
-            print("PEERJS not confirmed")
-
+        # two-phone networking lives in tools/test-multiplayer.py
         browser.close()
 
     Path("/tmp/chaseline-test-logs.json").write_text(json.dumps({"logs": logs, "errors": errors}, indent=2))

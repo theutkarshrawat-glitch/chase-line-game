@@ -77,6 +77,33 @@
 
   function youProfile() { return Prof.publicView(); }
 
+  function transportName() { return Net.Net.transport === 'direct' ? 'direct' : Net.Net.transport === 'relay' ? 'relay' : 'connecting'; }
+  function netTag() {
+    const el = $('netTag');
+    if (!el) return;
+    const online = Game.mode === 'host' || Game.mode === 'guest';
+    const t = Net.Net.transport;
+    el.style.display = online ? '' : 'none';
+    el.textContent = t === 'direct' ? 'DIRECT' : t === 'relay' ? 'RELAY' : 'OFFLINE';
+    el.className = t || 'off';
+  }
+  function wireNetCommon() {
+    Net.Net.onTransport = () => netTag();
+    Net.Net.onClose = () => {
+      netTag();
+      if (Game.screen === 'play' || Game.screen === 'cd') $('roomStatus').textContent = 'Connection lost.';
+    };
+    Net.Net.onInput = (msg) => {
+      if (Game.mode !== 'host' || !msg.input) return;
+      const i = msg.input;
+      const ri = Game.remoteInput || (Game.remoteInput = {});
+      for (const k in i) if (i[k] === true) ri[k] = true;
+      if (i.gate) ri.trapGate = true;
+      if (i.collapse) ri.trapCollapse = true;
+      Game.remoteHeld = { sprint: !!i.sprint, hold: !!i.hold };
+    };
+  }
+
   function difficultyFor() {
     const p = Prof.current();
     if (!p) return 'normal';
@@ -228,7 +255,10 @@
     Render.resetCam(Game.world, Game.youAre);
     Game.acc = 0;
     Game.remoteInput = {};
+    Game.remoteHeld = {};
+    Game.hostOver = null;
     Game.guestShadow = null;
+    netTag();
     const rn = Game.youAre === 'runner' ? (you.name + ' (YOU)') : (opp.name);
     const hn = Game.youAre === 'hunter' ? (you.name + ' (YOU)') : (opp.name);
     $('runnerLabel').textContent = 'RUNNER: ' + rn;
@@ -349,7 +379,7 @@
       if (aiIn.trapGate) Phys.dropGate(Game.world);
       if (aiIn.trapCollapse) Phys.dropCollapse(Game.world);
     } else if (Game.mode === 'host') {
-      Phys.applyInput(remote, Game.remoteInput || {});
+      Phys.applyInput(remote, Object.assign({}, Game.remoteHeld || {}, Game.remoteInput || {}));
       if (Game.remoteInput && Game.remoteInput.trapGate) Phys.dropGate(Game.world);
       if (Game.remoteInput && Game.remoteInput.trapCollapse) Phys.dropCollapse(Game.world);
       Game.remoteInput = {};
@@ -416,12 +446,15 @@
           if (traps.gate) Phys.dropGate(Game.world);
           if (traps.collapse) Phys.dropCollapse(Game.world);
           Phys.stepWorld(Game.world, step);
+          if (Game.hostOver) { Game.world.over = true; Game.world.result = Game.hostOver.result; }
+          else if (Game.world.over) { Game.world.over = false; Game.world.result = null; Game.world._overT = 0; }
         } else {
           const { inp, traps } = collectLocalInput();
           bindInputWorld(inp, traps);
           Phys.stepWorld(Game.world, step);
-          if (Game.mode === 'host' && Game.world.elapsed % 0.06 < step) {
+          if (Game.mode === 'host') {
             Net.sendState(Phys.snapshot(Game.world), Game.world.elapsed);
+            if (Game.world.over && !Game.world._overSent) { Game.world._overSent = true; Net.sendEvent('over', { result: Game.world.result }); }
           }
         }
         Game.acc -= step;
@@ -587,22 +620,26 @@
       $('roomCode').textContent = '…';
       $('roomHint').textContent = 'Share this code. The other phone joins with their own skills. Similar ranks are a fairer chase.';
       $('roomStatus').textContent = 'Opening a line…';
-      Net.onStatus = (s) => { $('roomStatus').textContent = s; };
-      Net.onProfile = (pr) => {
+      wireNetCommon();
+      Net.Net.onStatus = (s) => { if (s !== 'linked') $('roomStatus').textContent = s; };
+      let greeted = false;
+      Net.Net.onProfile = (pr) => {
         Game.opp = pr;
-        $('roomStatus').textContent = 'Linked with ' + pr.name + '  ·  ' + pr.rank + '. Starting.';
+        if (greeted) return;
+        greeted = true;
+        $('roomStatus').textContent = 'Linked with ' + pr.name + '  ·  ' + pr.rank + ' (' + transportName() + '). Pick a track.';
         Net.sendProfile(youProfile());
         Game.youAre = 'runner';
         Game.series = { you: 0, them: 0, round: 0, firstRole: 'runner' };
-        setTimeout(() => {
-          Net.sendStart({ kind: 'go', trackId: Game.trackId || 'water-towers', youAreHost: 'runner', series: Game.series });
-          show('track');
-        }, 400);
+        setTimeout(() => show('track'), 900);
+      };
+      Net.Net.onEvent = (msg) => {
+        if (msg.kind === 'ready' && Game.screen === 'result') $('resLine').textContent = Game.opp.name + ' is ready for the next round.';
       };
       Net.create((err, code) => {
-        if (err) { $('roomStatus').textContent = 'Could not reach the relay. Play solo, or try again.'; return; }
+        if (err) { $('roomStatus').textContent = Net.explain(err); return; }
         $('roomCode').textContent = code;
-        $('roomStatus').textContent = 'Waiting for the other phone…';
+        $('roomStatus').textContent = 'Waiting for the other phone… Keep this screen open while they join.';
       });
     });
     $('btnJoin').addEventListener('click', () => {
@@ -615,26 +652,37 @@
       $('roomHint').textContent = 'Enter the four-character code. You bring the skills saved on this phone.';
       $('roomStatus').textContent = '';
     });
+    $('joinInput').addEventListener('input', () => {
+      const v = Net.normalizeCode($('joinInput').value);
+      if (v !== $('joinInput').value && v.length <= 4 && $('joinInput').value.replace(/\s/g, '').length <= 4) $('joinInput').value = v;
+    });
     $('joinForm').addEventListener('submit', (e) => {
       e.preventDefault();
-      const code = $('joinInput').value.trim();
-      if (code.length < 4) return;
-      $('roomStatus').textContent = 'Looking for ' + code.toUpperCase() + '…';
-      Net.onProfile = (pr) => { Game.opp = pr; $('roomStatus').textContent = 'Linked with ' + pr.name + '  ·  ' + pr.rank; };
-      Net.onStart = (msg) => {
+      const code = Net.normalizeCode($('joinInput').value);
+      $('joinInput').value = code;
+      if (!Net.validCode(code)) { $('roomStatus').textContent = Net.explain(new Error('bad-code')); return; }
+      $('roomStatus').textContent = 'Looking for ' + code + '…';
+      wireNetCommon();
+      Net.Net.onStatus = (s) => { if (s !== 'linked') $('roomStatus').textContent = s; };
+      Net.Net.onProfile = (pr) => { Game.opp = pr; $('roomStatus').textContent = 'Linked with ' + pr.name + '  ·  ' + pr.rank + ' (' + transportName() + '). The host is picking a track…'; };
+      Net.Net.onEvent = (msg) => {
+        if (msg.kind === 'over' && Game.world && !Game.hostOver) Game.hostOver = { result: msg.result };
+      };
+      Net.Net.onStart = (msg) => {
         Game.trackId = msg.trackId || 'water-towers';
         Game.youAre = msg.youAreHost === 'runner' ? 'hunter' : 'runner';
-        Game.series = msg.series || Game.series;
-        if (msg.kind === 'go' || msg.kind === 'next') startRound();
+        const hs = msg.series;
+        if (hs) Game.series = { you: hs.them, them: hs.you, round: hs.round, firstRole: hs.firstRole === 'runner' ? 'hunter' : 'runner' };
+        if (Game.lastAward && hs) Game.lastAward.matchOver = false;
+        if (msg.kind === 'go' || msg.kind === 'next') { if (Game.screen !== 'cd' || msg.kind === 'next') startRound(); }
       };
-      Net.onState = (msg) => {
+      Net.Net.onState = (msg) => {
         if (Game.mode !== 'guest' || !msg.state || !Game.world) return;
         const s = msg.state;
         Game.world.t = s.t;
         Game.world.style = s.style;
         Game.world.boost = s.boost;
-        Game.world.over = s.over;
-        Game.world.result = s.result;
+        if (s.over && !Game.hostOver) Game.hostOver = { result: s.result };
         Game.world.gates = s.gates || Game.world.gates;
         Game.world.collapsed = s.collapsed || Game.world.collapsed;
         Game.world.cooldown = s.cooldown || Game.world.cooldown;
@@ -652,14 +700,13 @@
         lerp(Game.world.runner, s.runner);
         lerp(Game.world.hunter, s.hunter);
       };
-      Net.onClose = () => { if (Game.screen === 'play') $('roomStatus').textContent = 'Connection closed.'; };
       Net.join(code, (err) => {
-        if (err) { $('roomStatus').textContent = 'Could not join. Check the code, or play solo.'; return; }
+        if (err) { $('roomStatus').textContent = Net.explain(err); return; }
         Net.sendProfile(youProfile());
-        $('roomStatus').textContent = 'Linked. Waiting for the host to start…';
+        $('roomStatus').textContent = 'Linked (' + transportName() + '). Waiting for the host…';
       });
     });
-    $('btnRoomBack').addEventListener('click', () => { Net.destroy(); $('roomCode').style.display = ''; show('mode'); });
+    $('btnRoomBack').addEventListener('click', () => { Net.destroy(); Game.mode = 'solo'; netTag(); $('roomCode').style.display = ''; show('mode'); });
     $('btnGo').addEventListener('click', () => {
       Audio.ui();
       if (Game.mode === 'host') {
@@ -667,10 +714,14 @@
       }
       startRound();
     });
-    $('btnRematch').addEventListener('click', () => { Audio.ui(); nextRound(false); });
-    $('btnSwap').addEventListener('click', () => { Audio.ui(); nextRound(true); });
+    const guestWait = () => {
+      Net.sendEvent('ready');
+      $('resLine').textContent = 'Waiting for the host to start the next round…';
+    };
+    $('btnRematch').addEventListener('click', () => { Audio.ui(); if (Game.mode === 'guest') return guestWait(); nextRound(false); });
+    $('btnSwap').addEventListener('click', () => { Audio.ui(); if (Game.mode === 'guest') return guestWait(); nextRound(true); });
     $('btnResSkills').addEventListener('click', () => { Audio.ui(); show('skills'); });
-    $('btnResTitle').addEventListener('click', () => { Audio.ui(); Net.destroy(); show('title'); });
+    $('btnResTitle').addEventListener('click', () => { Audio.ui(); Net.destroy(); Game.mode = 'solo'; netTag(); show('title'); });
     $('btnGate').addEventListener('click', () => { pendingTraps.gate = true; });
     $('btnCollapse').addEventListener('click', () => { pendingTraps.collapse = true; });
     $('sprintBtn').addEventListener('pointerdown', (e) => { e.stopPropagation(); pending.sprint = true; });
