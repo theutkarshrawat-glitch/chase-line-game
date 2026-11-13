@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#d7c4b0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CHASE LINE">
+  <meta name="description" content="CHASE LINE — a rooftop parkour chase. Runner and hunter, best of three.">
+  <title>CHASE LINE</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/icon-32.png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <div id="app">
+    <canvas id="view"></canvas>
+    <button id="muteFab" type="button">SOUND</button>
+
+    <div id="rotate">
+      <div class="big">CHASE LINE</div>
+      <p>Turn your phone on its side to run.</p>
+    </div>
+
+    <div id="hud">
+      <div id="topHud">
+        <div class="role runner"><span class="badge">▶</span><span id="runnerLabel">RUNNER: YOU</span></div>
+        <div id="timerPill">1:00</div>
+        <div class="role hunter"><span id="hunterLabel">HUNTER: AI</span><span class="badge">◉</span></div>
+      </div>
+      <div id="styleBar"><div id="styleFill"></div></div>
+      <div id="stylePop"></div>
+      <button type="button" id="sprintBtn">SPRINT</button>
+      <div id="traps">
+        <button type="button" class="trap" id="btnGate"><span class="ico">⊞</span>GATE</button>
+        <button type="button" class="trap" id="btnCollapse"><span class="ico">↯</span>COLLAPSE</button>
+      </div>
+    </div>
+
+    <section id="titleScreen" class="screen" data-screen="title">
+      <div id="profileChip"></div>
+      <div class="content">
+        <h1 class="brand">CHASE LINE</h1>
+        <p class="tag">a rooftop chase</p>
+        <div class="row">
+          <button class="btn" id="btnPlay" type="button">Play</button>
+          <button class="btn ghost" id="btnSkills" type="button">Skills</button>
+          <button class="btn ghost" id="btnDaily" type="button">Daily Chase</button>
+        </div>
+        <p class="hint">Best of three. Roles swap. The longer you run, the more you can do.</p>
+      </div>
+    </section>
+
+    <section id="nameScreen" class="screen" data-screen="name">
+      <h1 class="brand" style="font-size:36px;">WHO IS RUNNING</h1>
+      <p class="hint">This name and your skills stay on this phone.</p>
+      <form id="nameForm">
+        <input id="nameInput" maxlength="12" placeholder="NAME" autocomplete="off" autocapitalize="characters">
+        <button class="btn" type="submit">Save</button>
+      </form>
+    </section>
+
+    <section id="modeScreen" class="screen" data-screen="mode">
+      <h1 class="brand" style="font-size:36px;">A MATCH</h1>
+      <p class="hint">When two phones meet, each brings their own unlocks. Pairing looks for a similar rank.</p>
+      <div class="row" style="margin-top:12px;">
+        <button class="btn" id="btnSolo" type="button">Solo vs AI</button>
+        <button class="btn" id="btnCreate" type="button">Create Match</button>
+        <button class="btn" id="btnJoin" type="button">Join Match</button>
+        <button class="btn ghost" id="btnPass" type="button">Pass and Play</button>
+      </div>
+      <div class="row" style="margin-top:16px;"><button class="btn ghost" id="btnModeBack" type="button">Back</button></div>
+    </section>
+
+    <section id="roomScreen" class="screen" data-screen="room">
+      <h1 class="brand" style="font-size:32px;" id="roomTitle">ROOM</h1>
+      <div id="roomCode">————</div>
+      <p class="hint" id="roomHint">Share this code. The other phone joins, and both of you keep your own skills.</p>
+      <form id="joinForm" style="display:none;">
+        <input id="joinInput" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">
+        <button class="btn" type="submit">Join</button>
+      </form>
+      <p class="hint" id="roomStatus"></p>
+      <div class="row"><button class="btn ghost" id="btnRoomBack" type="button">Back</button></div>
+    </section>
+
+    <section id="trackScreen" class="screen" data-screen="track">
+      <h1 class="brand" style="font-size:32px;">CHOOSE A LINE</h1>
+      <div id="trackGrid" class="grid"></div>
+      <div class="row"><button class="btn ghost" id="btnTrackBack" type="button">Back</button></div>
+    </section>
+
+    <section id="skillScreen" class="screen" data-screen="skills">
+      <h1 class="brand" style="font-size:32px;">SKILL TREES</h1>
+      <p class="hint" id="skillXp"></p>
+      <div class="tree">
+        <div class="col" id="runnerTree"></div>
+        <div class="col" id="chaserTree"></div>
+      </div>
+      <div class="row"><button class="btn ghost" id="btnSkillBack" type="button">Back</button></div>
+    </section>
+
+    <section id="loadoutScreen" class="screen" data-screen="loadout">
+      <h1 class="brand" style="font-size:32px;">LOADOUT</h1>
+      <p class="hint">Equip up to four moves. New ones are risk and reward, not flat upgrades.</p>
+      <div class="tree">
+        <div class="col"><h2>Runner</h2><div id="loadR"></div></div>
+        <div class="col"><h2>Chaser</h2><div id="loadC"></div></div>
+      </div>
+      <div class="row">
+        <button class="btn" id="btnGo" type="button">Ready</button>
+        <button class="btn ghost" id="btnLoadBack" type="button">Back</button>
+      </div>
+    </section>
+
+    <section id="cdScreen" class="screen play-clear" data-screen="cd">
+      <div style="margin:auto;text-align:center;">
+        <div id="cdRoles" class="tag"></div>
+        <div id="cdBig">3</div>
+      </div>
+    </section>
+
+    <section id="resultScreen" class="screen" data-screen="result">
+      <div id="resultsBox">
+        <p class="tag" id="resKicker">ROUND</p>
+        <h2 id="resTitle">ESCAPE</h2>
+        <p id="resLine" class="hint"></p>
+        <div class="xpbar"><i id="xpFill"></i></div>
+        <p id="teaser"></p>
+        <p id="seriesLine" class="hint"></p>
+        <div class="row" style="margin-top:12px;">
+          <button class="btn" id="btnRematch" type="button">Rematch</button>
+          <button class="btn hunt" id="btnSwap" type="button">Swap roles?</button>
+          <button class="btn ghost" id="btnResSkills" type="button">Skills</button>
+          <button class="btn ghost" id="btnResTitle" type="button">Title</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="./vendor/peerjs.min.js"></script>
+  <script src="./js/profile.js"></script>
+  <script src="./js/skills.js"></script>
+  <script src="./js/tracks.js"></script>
+  <script src="./js/physics.js"></script>
+  <script src="./js/audio.js"></script>
+  <script src="./js/render.js"></script>
+  <script src="./js/ai.js"></script>
+  <script src="./js/net.js"></script>
+  <script src="./js/game.js"></script>
+</body>
+</html>
