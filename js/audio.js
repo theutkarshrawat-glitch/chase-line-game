@@ -96,6 +96,20 @@
     if (Audio.master) Audio.master.gain.value = Audio.muted ? 0 : 0.85;
   };
   Audio.toggleMute = function () { Audio.setMuted(!Audio.muted); return Audio.muted; };
+  // a trap button just came live: a short, soft two-note tick
+  Audio.trapReady = function (kind) {
+    Audio.haptic(12);
+    if (!ready()) return;
+    const t = now();
+    tone({ freq: kind === 'gate' ? 880 : 660, t, dur: 0.07, type: 'sine', peak: 0.07, release: 0.06 });
+    tone({ freq: kind === 'gate' ? 1320 : 990, t: t + 0.07, dur: 0.09, type: 'sine', peak: 0.06, release: 0.08 });
+  };
+  Audio.door = function () {
+    if (!ready()) return;
+    const t = now();
+    noise({ t, dur: 0.12, peak: 0.16, from: 900, to: 300, type: 'bandpass' });
+    tone({ freq: 110, t: t + 0.05, dur: 0.2, type: 'triangle', peak: 0.12, release: 0.18 });
+  };
   Audio.haptic = function (ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* */ } };
 
   Audio.setWind = function (speed01) {

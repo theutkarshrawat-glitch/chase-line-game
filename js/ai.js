@@ -67,9 +67,25 @@
     if (world.elapsed > 4 && P.hasSkill(h.loadout, 'dive') && lead > 44 && lead < 66 && Math.abs(dy) < 8 && h.onGround && r.onGround) {
       if (diff !== 'easy' || rand(h) > 0.6) input.dive = true;
     }
-    if (world.elapsed > 7 && lead > 160 && lead < 560) {
-      if (P.hasSkill(h.loadout, 'gate') && world.cooldown.gate <= 0 && rand(h) < (diff === 'hard' ? 0.02 : 0.01)) input.trapGate = true;
-      if (P.hasSkill(h.loadout, 'collapse') && world.cooldown.collapse <= 0 && rand(h) < (diff === 'hard' ? 0.015 : 0.008)) input.trapCollapse = true;
+    // traps: same windows as the player's buttons. Decide once per site whether to use it
+    // and at what distance; hard aims for the middle of the glow, easy fires anywhere live.
+    b.trapPlan = b.trapPlan || {};
+    for (const kind of ['gate', 'collapse']) {
+      const T = world.traps && world.traps[kind];
+      if (!T || !T.site || !T.owned || T.charge <= 0) continue;
+      let plan = b.trapPlan[T.site];
+      if (!plan) {
+        const W = P.TRAP[kind];
+        const use = rand(h) < (diff === 'hard' ? 0.85 : diff === 'easy' ? 0.35 : 0.6);
+        // normal sometimes jumps the gun (fires early in the live window, giving the runner time to react)
+        const lo = diff === 'easy' ? W.lo : W.peakLo, hi = diff === 'hard' ? W.peakHi : W.hi;
+        plan = b.trapPlan[T.site] = { use, at: lo + (hi - lo) * (diff === 'hard' ? 0.35 + rand(h) * 0.3 : rand(h)) };
+      }
+      // below hard, the AI only springs a trap to close a real gap, not to finish a runner it is already on
+      const needed = diff === 'hard' || (r.x - h.x) > 230;
+      if (plan.use && needed && T.ready && T.d <= plan.at && world.elapsed > 4) {
+        if (kind === 'gate') input.trapGate = true; else input.trapCollapse = true;
+      }
     }
     return input;
   }

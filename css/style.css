@@ -73,7 +73,23 @@ button{font-family:inherit;cursor:pointer;border:0;letter-spacing:.14em;text-tra
   font-weight:500;font-size:9px;letter-spacing:.18em;box-shadow:0 2px 12px rgba(0,0,0,.25);
 }
 .trap .ico{width:auto;height:auto;font-size:20px;line-height:1;display:block;}
-.trap:disabled,.trap.is-cd{opacity:.35;}
+.trap{position:relative;--charge:0;transition:border-color .2s,box-shadow .2s,opacity .3s,transform .1s;}
+/* charge ring: fills clockwise as the runner nears the next trap site */
+.trap::before{content:"";position:absolute;inset:-6px;border-radius:50%;pointer-events:none;
+  background:conic-gradient(rgba(255,170,90,.95) calc(var(--charge) * 360deg), rgba(255,255,255,.12) 0);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 calc(100% - 3px));
+          mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 calc(100% - 3px));
+  opacity:.9;transition:opacity .3s;}
+.trap.is-idle{opacity:.45;}
+.trap.is-idle::before{opacity:.25;}
+.trap.is-ready{border-color:#ffb36b;background:rgba(255,122,40,.28);box-shadow:0 0 14px rgba(255,140,60,.55);opacity:1;}
+.trap.is-ready::before{background:conic-gradient(#ffb36b 360deg,#ffb36b 0);}
+.trap.is-peak{background:rgba(255,110,30,.55);border-color:#fff;box-shadow:0 0 26px rgba(255,140,60,.95),0 0 4px #fff inset;animation:trapPulse .45s ease-in-out infinite alternate;}
+@keyframes trapPulse{from{transform:scale(1);}to{transform:scale(1.09);}}
+.trap.is-missed{opacity:.2;transform:scale(.92);}
+.trap.is-missed::before{opacity:0;}
+.trap:disabled,.trap.is-cd{opacity:.3;}
+.trap:disabled::before{opacity:0;}
 .trap:active,#sprintBtn:active{transform:scale(.94);}
 #sprintBtn{position:absolute;left:calc(18px + var(--safe-l));bottom:calc(16px + var(--safe-b));display:none;}
 #sprintBtn.is-on{display:flex;}

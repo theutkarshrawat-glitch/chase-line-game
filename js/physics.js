@@ -33,6 +33,14 @@
   const CATCH_R = 30;
   const DIVE_R = 70;
   const EPS = 0.01;
+  const CYCLE = 150;              // world px per run cycle: 2.3 drawn body heights per two strides (Vector)
+  const BUF_UP = 0.42;            // swipe buffers: an early swipe queues into the next move
+  const BUF_DOWN = 0.32;
+  // hunter trap windows (distance from the runner's chest to the trap site, world px)
+  const TRAP = {
+    gate: { charge: 760, hi: 240, peakHi: 190, peakLo: 110, lo: 78 },
+    collapse: { charge: 900, hi: 330, peakHi: 260, peakLo: 150, lo: 96 },
+  };
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -76,7 +84,18 @@
       }
       return r;
     });
-    return { plats, obstacles, pipes, walls };
+    // the exit: a door in the face of a tall block that closes the route, so nobody runs past it
+    let exit = null;
+    if (track.finishX) {
+      const fp = plats.filter((p) => p.x <= track.finishX - 40 && p.x + p.w >= track.finishX + 40).sort((a, b) => a.y - b.y)[0]
+        || plats.slice().sort((a, b) => (b.x + b.w) - (a.x + a.w))[0];
+      if (fp) {
+        const x = track.finishX;
+        exit = { x, y: fp.y, doorX: x, doorW: 34, doorH: 72, plat: fp.id,
+          wall: { x: x + 36, y: fp.y - 900, w: Math.max(260, fp.x + fp.w - (x + 36) + 160), h: 900, kind: 'exit', id: 'exit', tags: [] } };
+      }
+    }
+    return { plats, obstacles, pipes, walls, exit };
   }
 
   function livePlatforms(world) {
@@ -114,6 +133,7 @@
     for (const o of world.geo.obstacles) if (!obstacleGone(world, o)) out.push(o);
     for (const p of world.geo.pipes) out.push(p);
     for (const w of world.geo.walls) out.push(w);
+    if (world.geo.exit) out.push(world.geo.exit.wall);
     for (const g of world.gates) out.push(gateRect(g));
     return out;
   }
@@ -234,7 +254,81 @@
     w.runner.vx = RUN_V * 0.55; w.hunter.vx = RUN_V * 0.5;
     w._solids = solids(w);
     for (const c of [w.runner, w.hunter]) { settle(w, c); initCloth(c); }
+    w.trapSites = buildTrapSites(w);
+    w.traps = { gate: trapState(w, 'gate'), collapse: trapState(w, 'collapse') };
     return w;
+  }
+
+  // ---------------------------------------------------------------- hunter trap sites
+  /** Fixed places on the route where a trap can be sprung. The HUD charges each
+   *  trap button as the runner closes on the next site; it is live only inside the
+   *  site's window and goes dark once the runner is past. */
+  function buildTrapSites(world) {
+    const out = [];
+    const plats = world.geo.plats;
+    const fin = world.finishX || 1e9;
+    for (const slot of (world.track.collapse || [])) {
+      const w = Math.min(slot.w || 160, 165);
+      const plat = plats.find((p) => p.x + 30 < slot.x && p.x + p.w > slot.x + w + 30);
+      if (plat) out.push({ kind: 'collapse', x: slot.x, w, y: plat.y, used: false, id: 'c' + slot.x });
+    }
+    const clear = (x, floor) => {
+      for (const s of world._solids) if (s.y < floor && s.x < x + 130 && s.x + s.w > x - 110 && s.y + s.h > floor - 140) return false;
+      return true;
+    };
+    const gates = [];
+    for (const sl of (world.track.gateSlots || [])) {
+      const p = supportUnder(world, sl.x + 10, sl.y, 20);
+      gates.push({ x: sl.x, y: p ? p.y : sl.y, w: sl.w || 18, h: sl.h || 120 });
+    }
+    // auto sites on long flat roofs: a clear stretch with head room and no edge nearby
+    for (const p of plats) {
+      if (p.slab || p.w < 320) continue;
+      for (let x = p.x + 170; x < p.x + p.w - 150; x += 520) {
+        if (x > fin - 420 || x < 900) continue;
+        if (!clear(x, p.y)) continue;
+        if (out.some((c) => Math.abs(c.x - x) < 360)) continue;
+        if (plats.some((q) => q !== p && q.y < p.y && q.y > p.y - 300 && q.x < x + 60 && q.x + q.w > x - 60)) continue;
+        gates.push({ x, y: p.y, w: 18, h: 120, auto: true });
+      }
+    }
+    gates.sort((a, b) => a.x - b.x);
+    let lastX = -1e9;
+    for (const g of gates) {
+      if (g.x - lastX < 650) continue;
+      lastX = g.x;
+      out.push({ kind: 'gate', x: g.x, y: g.y, w: g.w, h: g.h, used: false, id: 'g' + Math.round(g.x) });
+    }
+    return out.sort((a, b) => a.x - b.x);
+  }
+
+  /** Charge state of one trap kind for the HUD and the AI. */
+  function trapState(world, kind) {
+    const W = TRAP[kind], r = world.runner;
+    const prev = world.traps && world.traps[kind];
+    const owned = hasSkill(world.hunter.loadout, kind);
+    const cd = Math.max(0, world.cooldown[kind] || 0);
+    const front = r.x + r.w;
+    // the next site the runner has not yet passed on (roughly) its level
+    let site = null;
+    for (const st of world.trapSites || []) {
+      if (st.kind !== kind || st.used) continue;
+      const d = st.x - front;
+      if (d < W.lo) continue;
+      if (Math.abs(st.y - (r.y + r.h)) > 260 && d < W.charge) continue;
+      site = st; break;
+    }
+    const st = { kind, owned, cd, site: site ? site.id : null, x: site ? site.x : null, y: site ? site.y : null, w: site ? (site.w || 18) : 0,
+      d: site ? site.x - front : null, charge: 0, ready: false, peak: false, missedT: prev ? Math.max(0, (prev.missedT || 0) - DT) : 0 };
+    if (site) {
+      const d = st.d;
+      st.charge = d > W.hi ? clamp(1 - (d - W.hi) / (W.charge - W.hi), 0, 1) : 1;
+      st.ready = owned && cd <= 0 && d <= W.hi && d >= W.lo && !world.over;
+      st.peak = st.ready && d <= W.peakHi && d >= W.peakLo;
+    }
+    // the runner just went past the site we were charging for: flag the miss for the HUD
+    if (prev && prev.site && prev.site !== st.site && prev.charge >= 1 && !(world.trapSites.find((x) => x.id === prev.site) || {}).used) st.missedT = 0.7;
+    return st;
   }
 
   function settle(world, c) {
@@ -265,7 +359,7 @@
     // shadow the runner: a touch slower when close, catches up when left far behind
     let f = lead < 260 ? 0.965 : 0.965 + clamp((lead - 260) / 3000, 0, 0.09);
     if (c.aiDiff === 'easy') f -= 0.03;
-    if (c.aiDiff === 'hard') f += 0.015;
+    if (c.aiDiff === 'hard') f += 0.008;
     let v = RUN_V * f;
     if (c.sprinting) v = Math.max(v, SPRINT_MAX);
     return v;
@@ -295,7 +389,7 @@
         const t = clamp((u - a[0]) / Math.max(1e-6, b[0] - a[0]), 0, 1);
         const ease = b[3] || 'lin';
         const ty = ease === 'up' ? Math.sin(t * Math.PI / 2) : ease === 'down' ? 1 - Math.cos(t * Math.PI / 2) : smooth(t);
-        const tx = ease === 'slowx' ? smooth(t) : t;
+        const tx = ease === 'slowx' ? smooth(t) : ease === 'out' ? 1 - (1 - t) * (1 - t) : t;
         return { x: lerp(a[1], b[1], tx), y: lerp(a[2], b[2], ty) };
       }
     }
@@ -335,6 +429,7 @@
     }
     setH(world, c, CHAR_H) || setH(world, c, CROUCH_H) || setH(world, c, SLIDE_H);
     const s = supportOf(world, c);
+    if (m.type === 'exit') { c.onGround = true; c.vx = 0; c.state = 'stand'; return; }
     if (s) { c.onGround = true; c.state = 'run'; c.land = 0.12; c.airPeak = s.y; }
     else { c.onGround = false; c.state = 'air'; c.airPeak = c.y + c.h; }
   }
@@ -347,7 +442,7 @@
     const u1 = Math.max(0.05, (xs[1] - xs[0]) / total), u2 = (xs[2] - xs[0]) / total;
     let mult = 1, exit = v, clear = 3;
     if (kind === 'kong') { mult = 1.1; exit = v * 1.06; clear = 2; }
-    if (kind === 'stepvault') { mult = 0.72; exit = v * 0.8; clear = 4; }
+    if (kind === 'stepvault') { mult = 0.78; exit = v * 0.9; clear = 4; }
     if (kind === 'climbover') { mult = 0.42; exit = Math.max(120, v * 0.55); clear = 4; }
     const keys = [[0, xs[0], g], [u1, xs[1], top - clear, 'up'], [u2, xs[2], top - clear], [1, xs[3], o.base != null ? o.base : g, 'down']];
     const hand = kind === 'kong' ? { x: o.x + Math.min(o.w * 0.45, 30), y: top } : { x: o.x + 7, y: top };
@@ -364,9 +459,9 @@
     const face = S.x - c.w / 2 - 0.5;
     const v = Math.max(150, c.vx);
     let kind, dur, exit;
-    if (opts.fromAir) { kind = 'ledge'; dur = 0.46 + rise * 0.0016; exit = Math.max(150, v * 0.72); }
-    else if (rise <= MANTLE_MAX) { kind = 'mantle'; dur = opts.fast ? 0.34 : 0.55; exit = opts.fast ? v * 0.9 : v * 0.62; }
-    else { kind = 'climb'; dur = (opts.fast ? 0.42 : 0.8) + rise * 0.002; exit = opts.fast ? v * 0.8 : v * 0.5; }
+    if (opts.fromAir) { kind = 'ledge'; dur = 0.44 + rise * 0.0014; exit = Math.max(170, v * 0.82); }
+    else if (rise <= MANTLE_MAX) { kind = 'mantle'; dur = opts.fast ? 0.36 : 0.55; exit = opts.fast ? v * 0.95 : v * 0.66; }
+    else { kind = 'climb'; dur = (opts.fast ? 0.44 : 0.8) + rise * 0.0018; exit = opts.fast ? v * 0.88 : v * 0.55; }
     if (opts.scramble) { kind = 'climb'; dur = 1.1 + rise * 0.003; exit = 120; }
     const keys = [[0, fx0, f0]];
     if (fx0 < face - 0.5) keys.push([kind === 'mantle' ? 0.2 : 0.16, face, f0 - Math.min(rise * 0.25, 18), 'up']);
@@ -518,8 +613,8 @@
 
   function applyInput(c, input) {
     input = input || {};
-    if (input.jump || input.vault || input.wallrun || input.kong || input.precision) c.jumpBuf = 0.16;
-    if (input.slide || input.roll) { c.downBuf = 0.16; c.rollBuf = 0.36; }
+    if (input.jump || input.vault || input.wallrun || input.kong || input.precision) c.jumpBuf = BUF_UP;
+    if (input.slide || input.roll) { c.downBuf = BUF_DOWN; c.rollBuf = 0.5; }
     if (input.grab) c.wantGrab = true;
     if (input.sprint) c.wantSprint = true;
     else if (input.sprint === false) c.wantSprint = false;
@@ -553,6 +648,8 @@
         return true;
       }
     }
+    // swiped a little early: hold the swipe until the move's zone opens (queued, like Vector)
+    if (z && !z.active && z.dist < 200 && /vault|kong|climb|gap|wallrun/.test(z.kind)) return false;
     if (c.onGround) {
       doJump(world, c, { vx: c.vx, vy: -HOP_V }, 'hop');
       return true;
@@ -606,7 +703,7 @@
     c.land = Math.max(0, c.land - dt);
     c.grabT = Math.max(0, c.grabT - dt);
     c.grabAnim = Math.max(0, (c.grabAnim || 0) - dt);
-    c.phase = (c.dist / 128) * Math.PI * 2;
+    c.phase = (c.dist / CYCLE) * Math.PI * 2;
 
     if (c.y > FALL_Y) {
       if (c.role === 'hunter') { respawnHunter(world, c); return; }
@@ -615,6 +712,17 @@
         world.events.push({ type: 'fall', role: c.role });
         world.shake = Math.max(world.shake, 10);
       }
+      return;
+    }
+    if (c.inside) { c.vx = 0; c.vy = 0; return; }
+    if (c.role === 'hunter' && c.onGround && c.state !== 'move' && ((world.over && world.result === 'escape') || world.runner.exiting) && world.geo.exit) {
+      // the runner is going through the door: pull up smoothly short of it
+      const stopX = world.geo.exit.doorX - 46 - c.w;
+      c.vx = Math.min(c.vx * Math.pow(0.35, dt), Math.max(0, (stopX - c.x) * 5));
+      if (c.vx < 8) c.vx = 0;
+      c.state = c.vx > 40 ? 'run' : 'stand'; c.sprinting = false;
+      moveX(world, c, c.vx * dt); c.dist += c.vx * dt;
+      stepCloth(c, dt);
       return;
     }
     if (c.caught || c.state === 'takedown') {
@@ -832,7 +940,7 @@
 
   function tryCatch(world) {
     const r = world.runner, h = world.hunter;
-    if (r.caught || r.downed || world.over) return;
+    if (r.caught || r.downed || world.over || r.exiting) return;
     const dx = (r.x + r.w / 2) - (h.x + h.w / 2);
     const dy = (r.y + r.h) - (h.y + h.h);
     const diving = h.state === 'dive';
@@ -890,15 +998,14 @@
   }
 
   function dropCollapse(world) {
-    if (world.cooldown.collapse > 0) return false;
-    if (!hasSkill(world.hunter.loadout, 'collapse')) return false;
-    const r = world.runner;
-    let slot = null;
-    for (const s of (world.track.collapse || [])) if (s.x > r.x + 90 && s.x < r.x + 640) { slot = s; break; }
-    if (!slot) return false;
-    const w = Math.min(slot.w || 160, 165);
+    const T = world.traps && world.traps.collapse;
+    if (!T || !T.ready) return false;
+    const site = world.trapSites.find((x) => x.id === T.site);
+    if (!site) return false;
+    const slot = site, w = site.w;
     const plat = livePlatforms(world).find((p) => p.x + 30 < slot.x && p.x + p.w > slot.x + w + 30);
     if (!plat) return false;
+    site.used = true;
     world.collapsed.push({ x: slot.x, y: plat.y, w, t: 0 });
     world._solids = solids(world);
     spawnDebris(world, slot.x, plat.y, w);
@@ -909,18 +1016,11 @@
   }
 
   function dropGate(world) {
-    if (world.cooldown.gate > 0) return false;
-    if (!hasSkill(world.hunter.loadout, 'gate')) return false;
-    const r = world.runner;
-    let slot = null;
-    for (const s of (world.track.gateSlots || [])) if (s.x > r.x + 120 && s.x < r.x + 700) { slot = s; break; }
-    if (!slot) {
-      const ahead = r.x + 300;
-      const p = supportUnder(world, ahead, r.y + r.h, 20);
-      if (!p || p.x + p.w - 90 < ahead || p.x + 60 > ahead) return false;
-      for (const s of solids(world)) if (s !== p && s.x < ahead + 130 && s.x + s.w > ahead - 110 && s.y < p.y && s.y + s.h > p.y - 140) return false;
-      slot = { x: ahead, y: p.y, w: 18, h: 120 };
-    }
+    const T = world.traps && world.traps.gate;
+    if (!T || !T.ready) return false;
+    const slot = world.trapSites.find((x) => x.id === T.site);
+    if (!slot) return false;
+    slot.used = true;
     const p = supportUnder(world, slot.x + 10, slot.y, 20);
     const floor = p ? p.y : slot.y;
     world.gates.push({ x: slot.x, y: floor, w: slot.w || 18, h: slot.h || 120, open: 1, closing: true });
@@ -971,12 +1071,44 @@
     stepChar(world, world.runner, scaled);
     stepChar(world, world.hunter, scaled);
     tryCatch(world);
+    stepExit(world, scaled);
+    world.traps = { gate: trapState(world, 'gate'), collapse: trapState(world, 'collapse') };
 
     if (!world.over) {
       const r = world.runner;
       if (r.downed) { world.over = true; world.result = 'catch'; world.events.push({ type: 'catch', why: 'fall' }); }
-      else if (r.x + r.w >= world.finishX) { world.over = true; world.result = 'escape'; world.events.push({ type: 'escape' }); }
+      else if (r.inside) { world.over = true; world.result = 'escape'; world.events.push({ type: 'escape' }); }
       else if (world.t <= 0.0001) { world.over = true; world.result = 'escape'; world.events.push({ type: 'escape', why: 'timer' }); }
+    }
+  }
+
+  /** Finish: the runner runs into the exit doorway (a canned decelerating walk-in),
+   *  the door shuts behind them; the hunter pulls up short of the door. */
+  function stepExit(world, dt) {
+    const E = world.geo.exit;
+    if (!E) return;
+    const r = world.runner, h = world.hunter;
+    if (world.exitT != null) world.exitT += dt;
+    if (!world.over && !r.caught && !r.downed && !r.inside && r.state !== 'move' && r.onGround && !r.exiting) {
+      const fx = r.x + r.w / 2;
+      if (fx >= E.doorX - 70 && Math.abs((r.y + r.h) - E.y) < 4) {
+        const target = E.doorX + E.doorW / 2;
+        const v = Math.max(140, r.vx);
+        const dist = Math.max(4, target - fx);
+        r.exiting = true;
+        startMove(world, r, 'exit', [[0, fx, E.y], [1, target, E.y, 'out']], clamp(2 * dist / v, 0.22, 0.75), { h: CHAR_H, exitVx: 0, top: E.y, faceX: E.doorX });
+        r.onGround = true;
+        world.events.push({ type: 'exit-door' });
+      }
+    }
+    if (r.exiting && !r.move && !r.inside) {
+      r.inside = true; r.vx = 0; r.state = 'inside'; world.exitT = 0;
+      world.events.push({ type: 'door-close' });
+    }
+    // after an escape the hunter brakes and stops short of the door
+    if (((world.over && world.result === 'escape') || r.exiting) && !h.caught) {
+      const stopX = E.doorX - 46 - h.w;
+      if (h.x > stopX && h.onGround) h.x = stopX;
     }
   }
 
@@ -988,6 +1120,7 @@
       style: world.style, boost: world.boost, over: world.over, result: world.result, nearMiss: world.nearMiss,
       cooldown: world.cooldown, gates: world.gates, collapsed: world.collapsed, debris: world.debris,
       runner: slim(world.runner), hunter: slim(world.hunter),
+      trapUsed: (world.trapSites || []).filter((x) => x.used).map((x) => x.id), exitT: world.exitT,
     });
   }
   function slim(c) {
@@ -995,14 +1128,14 @@
       role: c.role, x: c.x, y: c.y, vx: c.vx, vy: c.vy, w: c.w, h: c.h,
       onGround: c.onGround, state: c.state, stateT: c.stateT, phase: c.phase, dist: c.dist,
       stamina: c.stamina, sprinting: c.sprinting, hanging: c.hanging,
-      caught: c.caught, downed: c.downed, facing: c.facing, land: c.land, airPeak: c.airPeak,
+      caught: c.caught, downed: c.downed, facing: c.facing, land: c.land, airPeak: c.airPeak, inside: !!c.inside, exiting: !!c.exiting,
       ragdoll: null, trick: c.trick, loadout: c.loadout,
       move: c.move ? { type: c.move.type, u: c.move.u, t: c.move.t, dur: c.move.dur, hand: c.move.hand, foot: c.move.foot, top: c.move.top, faceX: c.move.faceX, keys: c.move.keys, h: c.move.h, exitVx: c.move.exitVx, after: c.move.after } : null,
     };
   }
 
   const api = {
-    DT, G, PPM, RUN_V, MAX_SPEED, SPRINT_MAX, CHAR_W, CHAR_H, SLIDE_H, EDGE_ZONE, PERFECT, ROLL_DROP,
+    CYCLE, TRAP, trapState, DT, G, PPM, RUN_V, MAX_SPEED, SPRINT_MAX, CHAR_W, CHAR_H, SLIDE_H, EDGE_ZONE, PERFECT, ROLL_DROP,
     createWorld, stepWorld, applyInput, dropGate, dropCollapse,
     snapshot, clone, hasSkill, beginRagdoll, platforms, supportUnder, supportOf,
     solids, zoneAhead, planJump, gateRect, overlaps, buildGeo, samplePath, stepCloth,

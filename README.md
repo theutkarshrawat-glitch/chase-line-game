@@ -54,3 +54,18 @@ Two transports run at once: DIRECT (PeerJS/WebRTC) and RELAY (MQTT over secure W
 public brokers: shiftr.io on 443, EMQX, HiveMQ). If the direct line doesn't open within ~7 s (typical on
 mobile data behind carrier NAT), the match runs over the relay. The HUD shows which one is in use.
 The host is authoritative; snapshots are ~16 Hz on the relay.
+
+## v4: feel, trap timing, exit door
+
+- **Movement tuned against Vector** (numbers in `docs/vector-measurements.md`): rig drawn 1.25× larger,
+  stride cadence 1.77 Hz, Vector-style camera framing, render interpolation between fixed 60 Hz physics
+  steps, eased 0.16 s pose crossfades, smoothed camera ground, buffered swipes, moves that keep their speed.
+- **Hunter traps charge up**: GATE and COLLAPSE each have a fill ring that charges as the runner nears that
+  trap's site, glows when ready, pulses at the best moment (with a haptic tick + sound), and fades once the
+  runner is past. A matching marker shows on the trap site in the world (or a badge at the screen edge when
+  it is ahead off-screen). The AI hunter uses the same windows.
+- **Exit door**: every route ends in a building with an EXIT doorway. The runner runs in, the door slides
+  shut, then the results card. Nobody can run past it; the hunter pulls up short of the door.
+
+Checks: `node tools/matchups.js`, `node tools/exit-check.js`, `node tools/measure.js`,
+`python3 tools/test-mobile.py`, `python3 tools/test-multiplayer.py`, `python3 tools/shots-v4.py`.

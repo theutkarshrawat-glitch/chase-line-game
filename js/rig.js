@@ -10,7 +10,8 @@
 (function (root) {
   const L = { shin: 12.4, thigh: 12.6, torso: 16.2, neck: 2.4, head: 4.3, upper: 9.4, fore: 9.0, foot: 5.6 };
   const LEG = L.shin + L.thigh;
-  const CYCLE = 128; // px per full run cycle (two strides, ~4.4 m)
+  const CYCLE = 150; // world px per full run cycle (two strides): 2.3 drawn body heights, as measured in Vector
+  const BODY_PX = 52 * 1.25; // drawn standing height in world px (render draws the rig at 1.25x the collision box)
   const TAU = Math.PI * 2;
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -384,7 +385,7 @@
     ctx.restore();
   }
 
-  const Rig = { L, LEG, CYCLE, targetPose, blend, solve, draw, P, pose };
+  const Rig = { L, LEG, CYCLE, BODY_PX, targetPose, blend, solve, draw, P, pose };
   if (typeof module !== 'undefined' && module.exports) module.exports = Rig;
   root.ChaseRig = Rig;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

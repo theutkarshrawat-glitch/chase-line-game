@@ -277,14 +277,16 @@
   function local(world) { return Render.localRole === 'hunter' ? world.hunter : world.runner; }
   function other(world) { return Render.localRole === 'hunter' ? world.runner : world.hunter; }
 
-  function baseZoom() { return clamp(Render.h / 372, 0.6, 2.4) * (Render.zoomMul || 1); }
+  function baseZoom() { return clamp(Render.h / 345, 0.6, 2.6) * (Render.zoomMul || 1); }
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 
   function camTarget(world) {
     const L = local(world), O = other(world);
     const cam = Render.cam;
     const fx = L.x + L.w / 2, feet = L.y + L.h;
-    if (L.onGround) cam.ground = feet;
+    if (cam.ground == null) cam.ground = feet;
+    const kg = 1 - Math.exp(-(Render._fdt || 0.016) * 15);
+    if (L.onGround) cam.ground += (feet - cam.ground) * (Math.abs(feet - cam.ground) > 140 ? 1 : kg);
     else if (L.state === 'move') cam.ground += (Math.max(feet, L.move && L.move.top != null ? L.move.top : feet) - cam.ground) * 0.12;
     else if (feet > cam.ground + 10) cam.ground += (feet - cam.ground) * 0.15;
     else if (feet < cam.ground - 90) cam.ground += (feet + 90 - cam.ground) * 0.1;
@@ -318,7 +320,7 @@
     const zb = baseZoom();
     let zt = zb * (1 - 0.22 * clamp(out, 0, 1) + 0.08 * inn);
     // frame a close rival: the hunter breathing down the runner's neck, or the runner just ahead
-    const lsx = Render.w * (Render.localRole === 'hunter' ? 0.3 : 0.34);
+    const lsx = Render.w * (Render.localRole === 'hunter' ? 0.32 : 0.4);
     const dxo = (O.x + O.w / 2) - fx;
     if (!O.downed && Math.abs((O.y + O.h) - feet) < 260) {
       if (dxo < 0 && dxo > -270) zt = Math.min(zt, (lsx - 34) / -dxo);
@@ -327,7 +329,7 @@
     zt = clamp(zt, zb * 0.6, zb * 1.12);
     const lead = clamp(L.vx * 0.05, -10, 26);
     const tx = fx + lead + (Render.w * 0.5 - lsx) / zt;
-    const ty = cam.ground - (Render.h * 0.62 - Render.h * 0.5) / zt + yBias;
+    const ty = cam.ground - (Render.h * 0.58 - Render.h * 0.5) / zt + yBias;
     Render.debug.out = out; Render.debug.inn = inn; Render.debug.zt = zt;
     return { x: tx, y: ty, z: zt };
   }
@@ -342,6 +344,7 @@
 
   Render.resetCam = function (world, role) {
     if (role) Render.localRole = role;
+    Render.cam.ground = null;
     const t = camTarget(world);
     Object.assign(Render.cam, { x: t.x, y: t.y, z: t.z, vx: 0, vy: 0, vz: 0, init: true });
     Render.anim = {};
@@ -351,6 +354,7 @@
     if (role && role !== Render.localRole) { Render.localRole = role; }
     if (!Render.cam.init || Render.cam.world !== world) { Render.cam.world = world; Render.resetCam(world, role); }
     dt = Math.min(0.05, dt || 0.016);
+    Render._fdt = dt;
     const t = camTarget(world);
     const c = Render.cam;
     [c.x, c.vx] = spring(c.x, c.vx, t.x, 7.5, dt);
@@ -512,6 +516,113 @@
     if (blink) { ctx.beginPath(); ctx.arc(sx(r.x + r.w / 2), sy(r.y - 9), 2.4 * Render.cam.z, 0, 6.29); ctx.fill(); }
   }
 
+  /** The exit: a tall block that ends the route with a lit doorway in its face.
+   *  'back' draws the building and the light; 'front' the frame, sign and the door
+   *  panel that slides shut once the runner is through. */
+  function drawExit(ctx, world, P, pass) {
+    const E = world.geo && world.geo.exit;
+    if (!E) return;
+    const x0 = sx(E.doorX - 10), x1 = sx(E.wall.x + E.wall.w);
+    if (x1 < -40 || x0 > Render.w + 40) return;
+    const z = Render.cam.z, fy = sy(E.y), top = sy(E.y - 300);
+    const shut = clamp((world.exitT || 0) / 0.35, 0, 1);
+    if (pass === 'back') {
+      ctx.fillStyle = P.ink;
+      ctx.fillRect(x0, top, x1 - x0, Render.h - top + 10);
+      // parapet + rooftop kit so it reads as a building, not a slab
+      rect(ctx, E.doorX - 14, E.y - 304, E.wall.x + E.wall.w - E.doorX + 14, 6);
+      rect(ctx, E.doorX + 60, E.y - 330, 30, 26); rect(ctx, E.doorX + 140, E.y - 318, 8, 14);
+      ctx.fillStyle = 'rgba(150,170,190,0.16)';
+      for (let yy = E.y - 280; yy < E.y - 100; yy += 42) for (let xx = E.doorX + 56; xx < E.wall.x + E.wall.w - 20; xx += 46) rect(ctx, xx, yy, 18, 22);
+      // lit doorway + light pool on the roof
+      const lit = 1 - shut * 0.85;
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      const g = ctx.createRadialGradient(sx(E.doorX + E.doorW / 2), fy - 34 * z, 0, sx(E.doorX + E.doorW / 2), fy - 34 * z, 120 * z);
+      g.addColorStop(0, 'rgba(255,236,200,' + (0.7 * lit) + ')'); g.addColorStop(1, 'rgba(255,236,200,0)');
+      ctx.fillStyle = g; ctx.fillRect(sx(E.doorX - 130), fy - 150 * z, 300 * z, 160 * z);
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255,246,228,' + (0.95 * lit + 0.05) + ')';
+      rect(ctx, E.doorX, E.y - E.doorH, E.doorW, E.doorH);
+      return;
+    }
+    // front: door panel sliding down over the opening, frame, EXIT sign
+    if (shut > 0) {
+      ctx.fillStyle = P.ink;
+      rect(ctx, E.doorX, E.y - E.doorH, E.doorW, E.doorH * shut);
+      ctx.fillStyle = 'rgba(150,170,190,0.25)';
+      for (let k = 6; k < E.doorH * shut; k += 7) rect(ctx, E.doorX + 2, E.y - E.doorH + k, E.doorW - 4, 1);
+    }
+    ctx.fillStyle = P.ink;
+    rect(ctx, E.doorX - 6, E.y - E.doorH - 6, E.doorW + 12, 6);
+    rect(ctx, E.doorX - 6, E.y - E.doorH, 6, E.doorH);
+    const blink = shut > 0 ? 1 : 0.75 + 0.25 * Math.sin(Render.time * 5);
+    ctx.fillStyle = 'rgba(120,255,170,' + (0.9 * blink) + ')';
+    rect(ctx, E.doorX + 4, E.y - E.doorH - 20, 26, 10);
+    ctx.fillStyle = P.ink;
+    ctx.font = '700 ' + Math.max(6, Math.round(8 * z)) + 'px "Barlow Condensed", system-ui, sans-serif';
+    ctx.fillText('EXIT', sx(E.doorX + 7.5), sy(E.y - E.doorH - 12));
+  }
+
+  /** Hunter view: where the next trap will spring, charging with the button. */
+  function drawTrapMarks(ctx, world) {
+    const T = world.traps;
+    if (!T) return;
+    const z = Render.cam.z;
+    for (const kind of ['gate', 'collapse']) {
+      const t = T[kind];
+      if (!t || !t.site || !t.owned || t.charge <= 0) continue;
+      const x = sx(t.x);
+      const fy = sy(t.y);
+      const pulse = t.peak ? 0.6 + 0.4 * Math.sin(Render.time * 14) : 1;
+      if (x < -80) continue;
+      if (x > Render.w - 20) {
+        // off-screen ahead: a charge badge pinned to the right edge at the site's height
+        const by = clamp(fy - 95 * z, 70, Render.h - 150), bx = Render.w - 64;
+        ctx.save();
+        ctx.globalAlpha = t.ready ? pulse : 0.55;
+        ctx.fillStyle = 'rgba(10,12,16,0.6)';
+        ctx.beginPath(); ctx.arc(bx, by, 15, 0, 6.29); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(bx, by, 15, 0, 6.29); ctx.stroke();
+        ctx.strokeStyle = t.ready ? '#ffb36b' : 'rgba(255,200,150,0.9)';
+        ctx.beginPath(); ctx.arc(bx, by, 15, -Math.PI / 2, -Math.PI / 2 + 6.283 * t.charge); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(kind === 'gate' ? '⊞' : '↯', bx, by + 5);
+        ctx.beginPath(); ctx.moveTo(bx + 20, by - 6); ctx.lineTo(bx + 27, by); ctx.lineTo(bx + 20, by + 6); ctx.fill();
+        ctx.textAlign = 'left';
+        ctx.restore();
+        continue;
+      }
+      const col = t.ready ? 'rgba(255,150,60,' : 'rgba(255,200,150,';
+      const a = (t.ready ? 0.95 : 0.35 + 0.4 * t.charge) * pulse;
+      ctx.save();
+      if (kind === 'gate') {
+        const h = 92 * z, w = Math.max(18, t.w) * z;
+        ctx.strokeStyle = col + a + ')'; ctx.lineWidth = 1.6 * z; ctx.setLineDash([4 * z, 3 * z]);
+        ctx.strokeRect(x, fy - 30 * z - h, w, h);
+        ctx.setLineDash([]);
+        ctx.fillStyle = col + (0.22 * a) + ')';
+        ctx.fillRect(x, fy - 30 * z - h, w, h * t.charge);
+        ctx.fillStyle = col + a + ')';
+        ctx.fillRect(x - 4 * z, fy - 30 * z - h - 4 * z, w + 8 * z, 3 * z);
+      } else {
+        const w = t.w * z;
+        ctx.strokeStyle = col + a + ')'; ctx.lineWidth = 2 * z;
+        ctx.beginPath();
+        for (let i = 0; i <= 10; i++) { const xx = x + (w * i) / 10, yy = fy + 2 * z + ((i % 2) ? 3 : -1) * z; i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+        ctx.stroke();
+        ctx.fillStyle = col + (0.25 * a) + ')';
+        ctx.fillRect(x, fy - 6 * z, w * t.charge, 4 * z);
+      }
+      if (t.ready) {
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.9 * pulse) + ')';
+        ctx.font = '600 ' + Math.round(9 * Math.max(1, z)) + 'px "Barlow Condensed", system-ui, sans-serif';
+        ctx.fillText(t.peak ? 'NOW' : kind.toUpperCase(), x - 2 * z, fy - (kind === 'gate' ? 132 : 14) * z);
+      }
+      ctx.restore();
+    }
+  }
+
   function drawProp(ctx, pr, P) {
     const z = Render.cam.z * (pr.s || 1);
     const x = sx(pr.x), y = sy(pr.y);
@@ -641,7 +752,10 @@
 
   // ------------------------------------------------------------------ characters
 
+  const XFADE = 0.16;
+  Render.BODY_SCALE = 1.25;
   function drawChar(ctx, c, world) {
+    if (c.inside && (world.exitT || 0) > 0.3) return;
     const R = Rig();
     const key = c.role;
     const a = Render.anim[key] || (Render.anim[key] = { prev: null, cur: null, tag: '', t: 1 });
@@ -650,7 +764,7 @@
     if (tag !== a.tag) {
       a.prev = a.cur || target; a.t = 0; a.tag = tag;
     }
-    a.t = Math.min(1, a.t + Render.dt / 0.11);
+    a.t = Math.min(1, a.t + Render.dt / XFADE);
     let p = target;
     if (a.prev && a.t < 1) {
       const sm = a.t * a.t * (3 - 2 * a.t);
@@ -658,7 +772,7 @@
       p.ik = target.ik; p.ground = target.ground;
     }
     a.cur = p;
-    const S = c.role === 'hunter' ? 1.04 : 1;
+    const S = Render.BODY_SCALE * (c.role === 'hunter' ? 1.04 : 1);
     const ax = c.x + c.w / 2, ay = c.y + c.h;
     const extra = c.move ? { hand: c.move.hand, faceX: c.move.faceX } : null;
     const j = R.solve(c, p, ax, ay, S, extra);
@@ -812,28 +926,8 @@
         rect(ctx, hole.x + hole.w + 4 - k * 2, hole.y + k * 3, 3, 3);
       }
     }
-    // finish: an exit door frame with light spilling out
-    const fxs = sx(world.finishX);
-    if (fxs > -60 && fxs < W + 60) {
-      const fp = plats.find((p) => p.x <= world.finishX && p.x + p.w >= world.finishX) || plats[plats.length - 1];
-      const fy = sy(fp.y);
-      const z = cam.z;
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const g = ctx.createRadialGradient(fxs + 14 * z, fy - 30 * z, 0, fxs + 14 * z, fy - 30 * z, 90 * z);
-      g.addColorStop(0, 'rgba(255,245,215,0.75)'); g.addColorStop(1, 'rgba(255,245,215,0)');
-      ctx.fillStyle = g; ctx.fillRect(fxs - 90 * z, fy - 130 * z, 200 * z, 140 * z);
-      ctx.restore();
-      ctx.fillStyle = P.ink;
-      ctx.fillRect(fxs - 6 * z, fy - 70 * z, 44 * z, 6 * z);
-      ctx.fillRect(fxs - 6 * z, fy - 70 * z, 6 * z, 70 * z);
-      ctx.fillRect(fxs + 32 * z, fy - 70 * z, 6 * z, 70 * z);
-      ctx.fillStyle = 'rgba(255,250,235,0.9)';
-      ctx.fillRect(fxs, fy - 64 * z, 32 * z, 64 * z);
-      ctx.fillStyle = P.ink;
-      ctx.font = '600 ' + Math.round(10 * z) + 'px "Barlow Condensed", system-ui, sans-serif';
-      ctx.fillText('EXIT', fxs + 2 * z, fy - 74 * z);
-    }
+    drawExit(ctx, world, P, 'back');
+    if (!opts.title && Render.localRole === 'hunter') drawTrapMarks(ctx, world);
 
     if (!opts.title) drawCues(ctx, world);
 
@@ -855,6 +949,7 @@
       drawChar(ctx, second, world);
     }
 
+    drawExit(ctx, world, P, 'front');
     if (P.rain) drawRain(ctx, world);
     if (!opts.title) drawSpeed(ctx, world);
 

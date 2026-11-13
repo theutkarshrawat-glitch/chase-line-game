@@ -432,10 +432,11 @@
 
     if (Game.frozen) {
       Game.acc = 0;
-    } else if (Game.screen === 'play' && (!Game.world.over || (Game.world._overT || 0) < (Game.world.result === 'catch' ? 1.2 : 0.5))) {
+    } else if (Game.screen === 'play' && (!Game.world.over || (Game.world._overT || 0) < overHold(Game.world))) {
       Game.acc += dt;
       const step = Phys.DT;
       while (Game.acc >= step) {
+        capturePrev(Game.world);
         if (Game.mode === 'guest') {
           const { inp, traps } = collectLocalInput();
           Game.seq++;
@@ -461,15 +462,19 @@
       }
       sfxFromEvents(Game.world);
       // let the takedown / escape beat play out before the results card
-      if (Game.world.over && (Game.world._overT || 0) >= (Game.world.result === 'catch' ? 1.2 : 0.5)) endRound();
+      if (Game.world.over && (Game.world._overT || 0) >= overHold(Game.world)) endRound();
     } else if (Game.screen === 'result' || (Game.world && Game.world.over)) {
       Game.acc += dt;
       while (Game.acc >= Phys.DT) {
+        capturePrev(Game.world);
         Phys.stepWorld(Game.world, Phys.DT);
         Game.acc -= Phys.DT;
       }
     }
 
+    // draw between the last two fixed physics steps, so 60/90/120 Hz screens move evenly
+    const alpha = Game.frozen ? 1 : Math.max(0, Math.min(1, Game.acc / Phys.DT));
+    const undo = interpolate(Game.world, alpha);
     Render.follow(Game.world, dt, Game.youAre);
     // footsteps from the local run cycle (two per cycle)
     const me = Game.youAre === 'runner' ? Game.world.runner : Game.world.hunter;
@@ -477,9 +482,47 @@
     if (Game.screen === 'play' && me.onGround && (me.state === 'run' || me.state === 'land') && stepIdx !== Game._stepIdx && me.vx > 80) Audio.step(me.vx * 1.7);
     Game._stepIdx = stepIdx;
     Render.draw(Game.world);
+    undo();
     updateHud();
     const spd = Game.world ? Math.max(Game.world.runner.vx, Game.world.hunter.vx) : 0;
     Audio.setWind(Math.min(1, spd / 300));
+  }
+
+  // how long the end beat plays before the results card: takedown, or the exit door shutting
+  function overHold(world) { return world.result === 'catch' ? 1.2 : (world.runner.inside ? 1.15 : 0.6); }
+
+  function capturePrev(world) {
+    const P = Game._prev || (Game._prev = {});
+    for (const c of [world.runner, world.hunter]) {
+      P[c.role] = { x: c.x, y: c.y, h: c.h, dist: c.dist, u: c.move ? c.move.u : null, mt: c.move ? c.move.type : null, world };
+    }
+  }
+  function interpolate(world, a) {
+    const saved = [];
+    const P = Game._prev || {};
+    for (const c of [world.runner, world.hunter]) {
+      const p = P[c.role];
+      if (!p || p.world !== world || a >= 1) continue;
+      if (Math.abs(c.x - p.x) > 60 || Math.abs(c.y - p.y) > 60 || p.h !== c.h) continue; // teleport / resize: no blend
+      const s = { c, x: c.x, y: c.y, dist: c.dist, phase: c.phase, u: c.move ? c.move.u : null };
+      const nx = p.x + (c.x - p.x) * a, ny = p.y + (c.y - p.y) * a;
+      const dx = nx - c.x, dy = ny - c.y;
+      c.x = nx; c.y = ny;
+      c.dist = p.dist + (c.dist - p.dist) * a;
+      c.phase = (c.dist / Phys.CYCLE) * Math.PI * 2;
+      if (c.move && p.mt === c.move.type && p.u != null && p.u <= c.move.u) c.move.u = p.u + (c.move.u - p.u) * a;
+      for (const q of (c.scarf || []).concat(c.tie || [])) { q.x += dx; q.y += dy; }
+      s.dx = dx; s.dy = dy;
+      saved.push(s);
+    }
+    return () => {
+      for (const s of saved) {
+        const c = s.c;
+        c.x = s.x; c.y = s.y; c.dist = s.dist; c.phase = s.phase;
+        if (c.move && s.u != null) c.move.u = s.u;
+        for (const q of (c.scarf || []).concat(c.tie || [])) { q.x -= s.dx; q.y -= s.dy; }
+      }
+    };
   }
 
   function sfxFromEvents(world) {
@@ -494,6 +537,7 @@
       if (e.type === 'collapse') Audio.collapse();
       if (e.type === 'catch') Audio.catch();
       if (e.type === 'escape') Audio.escape();
+      if (e.type === 'door-close') Audio.door();
       if (e.type === 'near-miss') Audio.nearMiss();
       if (e.type === 'style') popStyle(e.kind, e.pts);
       if ((e.type === 'climb' || e.type === 'wallrun') && e.role === Game.youAre) Audio.vault();
@@ -514,12 +558,28 @@
     if (!Game.world) return;
     $('timerPill').textContent = formatTime(Game.world.t);
     $('styleFill').style.width = Math.round(Game.world.boost * 100) + '%';
-    const g = Game.world.cooldown.gate;
-    const c = Game.world.cooldown.collapse;
-    $('btnGate').classList.toggle('is-cd', g > 0);
-    $('btnCollapse').classList.toggle('is-cd', c > 0);
-    if (g > 0) $('btnGate').querySelector('.cd') || $('btnGate');
+    trapHud('gate', $('btnGate'));
+    trapHud('collapse', $('btnCollapse'));
     $('sprintBtn').classList.toggle('is-hot', !!(Game.world.hunter.sprinting));
+  }
+
+  /** Trap buttons charge as the runner nears the next trap site, glow inside the
+   *  window (brightest at the sweet spot) and go dark once the runner is past. */
+  function trapHud(kind, btn) {
+    const T = Game.world.traps && Game.world.traps[kind];
+    if (!btn || !T) return;
+    const mine = Game.youAre === 'hunter' && Game.screen === 'play';
+    const charge = T.owned ? (T.cd > 0 ? 0 : T.charge) : 0;
+    btn.style.setProperty('--charge', charge.toFixed(3));
+    btn.classList.toggle('is-ready', !!T.ready);
+    btn.classList.toggle('is-peak', !!T.peak);
+    btn.classList.toggle('is-cd', T.cd > 0);
+    btn.classList.toggle('is-idle', !T.site || T.charge <= 0);
+    btn.classList.toggle('is-missed', T.missedT > 0 && !T.ready);
+    btn.setAttribute('aria-label', kind + (T.ready ? ' ready' : T.cd > 0 ? ' recharging' : T.site ? ' charging' : ' no trap ahead'));
+    const k = '_trapWas_' + kind;
+    if (mine && T.ready && !Game[k]) Audio.trapReady(kind);
+    Game[k] = !!T.ready;
   }
 
   // Swipe controls
@@ -683,6 +743,8 @@
         Game.world.style = s.style;
         Game.world.boost = s.boost;
         if (s.over && !Game.hostOver) Game.hostOver = { result: s.result };
+        if (s.trapUsed && Game.world.trapSites) for (const st of Game.world.trapSites) if (s.trapUsed.indexOf(st.id) >= 0) st.used = true;
+        if (s.exitT != null && Game.world.exitT == null) Game.world.exitT = s.exitT;
         Game.world.gates = s.gates || Game.world.gates;
         Game.world.collapsed = s.collapsed || Game.world.collapsed;
         Game.world.cooldown = s.cooldown || Game.world.cooldown;
@@ -694,6 +756,7 @@
           c.vx = n.vx; c.vy = n.vy; c.state = n.state; c.stateT = n.stateT;
           c.onGround = n.onGround; c.phase = n.phase; c.caught = n.caught; c.downed = n.downed;
           c.h = n.h; c.sprinting = n.sprinting; c.land = n.land || 0; c.trick = n.trick;
+          c.inside = !!n.inside; c.exiting = !!n.exiting;
           if (n.dist != null) c.dist = n.dist;
           c.move = n.move ? Object.assign({}, n.move) : null;
         }
